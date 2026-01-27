@@ -4,6 +4,7 @@
 import 'package:flutter/material.dart';
 import '../widgets/common_widgets.dart';
 import 'register.dart';
+import 'forgot_password.dart'; // Import the new page
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -13,10 +14,7 @@ class LoginPage extends StatefulWidget {
 }
 
 class _LoginPageState extends State<LoginPage> {
-  // 1. Create the Form Key
   final _formKey = GlobalKey<FormState>();
-
-  // 2. Create Controllers to capture input
   final TextEditingController _emailController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
 
@@ -30,19 +28,18 @@ class _LoginPageState extends State<LoginPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.white, // background white
+      backgroundColor: Colors.white,
       body: Center(
-        child: SingleChildScrollView( // Added scroll view to be safe against keyboards
+        child: SingleChildScrollView(
           padding: const EdgeInsets.all(20),
           child: AuthBox(
-            // 3. Wrap in Form
             child: Form(
               key: _formKey,
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   const Text(
-                    "Login", // header
+                    "Login",
                     style: TextStyle(
                       fontSize: 28,
                       fontWeight: FontWeight.bold,
@@ -51,58 +48,65 @@ class _LoginPageState extends State<LoginPage> {
                   ),
                   const SizedBox(height: 20),
                   
-                  // Email Field with Validation
                   AuthTextField(
                     labelText: "Email",
                     obscureText: false,
                     controller: _emailController,
                     validator: (value) {
-                      if (value == null || value.isEmpty) {
-                        return 'Please enter your email';
-                      }
+                      if (value == null || value.isEmpty) return 'Please enter your email';
                       return null;
                     },
                   ),
                   const SizedBox(height: 10),
                   
-                  // Password Field with Validation
                   AuthTextField(
                     labelText: "Password",
                     obscureText: true,
                     controller: _passwordController,
                     validator: (value) {
-                      if (value == null || value.isEmpty) {
-                        return 'Please enter your password';
-                      }
+                      if (value == null || value.isEmpty) return 'Please enter your password';
                       return null;
                     },
                   ),
-                  const SizedBox(height: 20),
+
+                  // --- NEW: Forgot Password Button ---
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: TextButton(
+                      onPressed: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => const ForgotPasswordPage(),
+                          ),
+                        );
+                      },
+                      child: const Text(
+                        "Forgot Password?",
+                        style: TextStyle(
+                          color: Colors.blue, 
+                          fontWeight: FontWeight.bold,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ),
+                  ),
+                  // -----------------------------------
+
+                  const SizedBox(height: 10),
                   
-                  // Login Button with Check
                   AuthButton(
                     text: "Login",
                     onPressed: () {
                       if (_formKey.currentState!.validate()) {
-                        // Validation Successful
                         ScaffoldMessenger.of(context).showSnackBar(
                           const SnackBar(
                             content: Text('Logging in...'),
                             backgroundColor: Colors.green,
-                            duration: Duration(seconds: 1),
                           ),
                         );
-                        
-                        // TODO: Add backend authentication logic here
-                        
-                        // For now, let's pretend to go to Home Page after 1 second
-                        /* Future.delayed(const Duration(seconds: 1), () {
-                          // Navigator.pushReplacementNamed(context, '/home');
-                        });
-                        */
                       } else {
-                        // Validation Failed
-                         ScaffoldMessenger.of(context).showSnackBar(
+                        ScaffoldMessenger.of(context).showSnackBar(
                           const SnackBar(
                             content: Text('Please enter email and password'),
                             backgroundColor: Colors.red,
