@@ -1,122 +1,268 @@
 import 'package:flutter/material.dart';
+import '../widgets/common_widgets.dart';
+import '../widgets/custom_bottom_nav.dart';
 
-void main() {
-  runApp(const MyApp());
+class SettingsPage extends StatefulWidget {
+  const SettingsPage({super.key});
+
+  @override
+  State<SettingsPage> createState() => _SettingsPageState();
 }
 
-class MyApp extends StatelessWidget {
-  const MyApp({super.key});
+class _SettingsPageState extends State<SettingsPage> {
+  final TextEditingController _usernameController = TextEditingController(text: "FoodieUser123");
+  final TextEditingController _emailController = TextEditingController(text: "user@example.com"); 
+  
+  // 1. Add a FocusNode to control the keyboard
+  final FocusNode _usernameFocusNode = FocusNode();
 
-  // This widget is the root of your application.
+  final List<TextEditingController> _cuisineControllers = [];
+  final List<TextEditingController> _dietaryControllers = [];
+
+  bool _isEditingUsername = false;
+
   @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Flutter Demo',
-      theme: ThemeData(
-        // This is the theme of your application.
-        //
-        // TRY THIS: Try running your application with "flutter run". You'll see
-        // the application has a purple toolbar. Then, without quitting the app,
-        // try changing the seedColor in the colorScheme below to Colors.green
-        // and then invoke "hot reload" (save your changes or press the "hot
-        // reload" button in a Flutter-supported IDE, or press "r" if you used
-        // the command line to start the app).
-        //
-        // Notice that the counter didn't reset back to zero; the application
-        // state is not lost during the reload. To reset the state, use hot
-        // restart instead.
-        //
-        // This works for code too, not just values: Most code changes can be
-        // tested with just a hot reload.
-        colorScheme: .fromSeed(seedColor: Colors.deepPurple),
-      ),
-      home: const MyHomePage(title: 'Flutter Demo Home Page'),
-    );
+  void initState() {
+    super.initState();
+    _addItem(_cuisineControllers, "Japanese");
+    _addItem(_cuisineControllers, "Italian");
+    _addItem(_dietaryControllers, "No Nuts");
   }
-}
-
-class MyHomePage extends StatefulWidget {
-  const MyHomePage({super.key, required this.title});
-
-  // This widget is the home page of your application. It is stateful, meaning
-  // that it has a State object (defined below) that contains fields that affect
-  // how it looks.
-
-  // This class is the configuration for the state. It holds the values (in this
-  // case the title) provided by the parent (in this case the App widget) and
-  // used by the build method of the State. Fields in a Widget subclass are
-  // always marked "final".
-
-  final String title;
 
   @override
-  State<MyHomePage> createState() => _MyHomePageState();
-}
+  void dispose() {
+    _usernameController.dispose();
+    _emailController.dispose();
+    _usernameFocusNode.dispose(); // Dispose the focus node
+    for (var c in _cuisineControllers) c.dispose();
+    for (var c in _dietaryControllers) c.dispose();
+    super.dispose();
+  }
 
-class _MyHomePageState extends State<MyHomePage> {
-  int _counter = 0;
-
-  void _incrementCounter() {
+  void _addItem(List<TextEditingController> list, [String? text]) {
     setState(() {
-      // This call to setState tells the Flutter framework that something has
-      // changed in this State, which causes it to rerun the build method below
-      // so that the display can reflect the updated values. If we changed
-      // _counter without calling setState(), then the build method would not be
-      // called again, and so nothing would appear to happen.
-      _counter++;
+      list.add(TextEditingController(text: text ?? ""));
     });
   }
 
-  @override
-  Widget build(BuildContext context) {
-    // This method is rerun every time setState is called, for instance as done
-    // by the _incrementCounter method above.
-    //
-    // The Flutter framework has been optimized to make rerunning build methods
-    // fast, so that you can just rebuild anything that needs updating rather
-    // than having to individually change instances of widgets.
-    return Scaffold(
-      appBar: AppBar(
-        // TRY THIS: Try changing the color here to a specific color (to
-        // Colors.amber, perhaps?) and trigger a hot reload to see the AppBar
-        // change color while the other colors stay the same.
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-        // Here we take the value from the MyHomePage object that was created by
-        // the App.build method, and use it to set our appbar title.
-        title: Text(widget.title),
-      ),
-      body: Center(
-        // Center is a layout widget. It takes a single child and positions it
-        // in the middle of the parent.
-        child: Column(
-          // Column is also a layout widget. It takes a list of children and
-          // arranges them vertically. By default, it sizes itself to fit its
-          // children horizontally, and tries to be as tall as its parent.
-          //
-          // Column has various properties to control how it sizes itself and
-          // how it positions its children. Here we use mainAxisAlignment to
-          // center the children vertically; the main axis here is the vertical
-          // axis because Columns are vertical (the cross axis would be
-          // horizontal).
-          //
-          // TRY THIS: Invoke "debug painting" (choose the "Toggle Debug Paint"
-          // action in the IDE, or press "p" in the console), to see the
-          // wireframe for each widget.
-          mainAxisAlignment: .center,
+  void _removeItem(List<TextEditingController> list, int index) {
+    setState(() {
+      list[index].dispose();
+      list.removeAt(index);
+    });
+  }
+
+  Widget _buildPreferenceSection({
+    required String title,
+    required List<TextEditingController> controllers,
+    required VoidCallback onAdd,
+    required Function(int) onRemove,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            const Text('You have pushed the button this many times:'),
-            Text(
-              '$_counter',
-              style: Theme.of(context).textTheme.headlineMedium,
+            Text(title, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+            IconButton(
+              icon: const Icon(Icons.add_circle_outline),
+              onPressed: onAdd,
             ),
           ],
         ),
+        if (controllers.isEmpty)
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 8.0),
+            child: Text("No preferences set", style: TextStyle(color: Colors.grey, fontStyle: FontStyle.italic)),
+          )
+        else
+          ...controllers.asMap().entries.map((entry) {
+            int index = entry.key;
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 8.0),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: SizedBox(
+                      height: 45,
+                      child: TextField(
+                        controller: entry.value,
+                        decoration: const InputDecoration(
+                          border: OutlineInputBorder(),
+                          contentPadding: EdgeInsets.symmetric(horizontal: 10),
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 5),
+                  IconButton(
+                    icon: const Icon(Icons.delete_outline, color: Colors.red),
+                    onPressed: () => onRemove(index),
+                  ),
+                ],
+              ),
+            );
+          }),
+      ],
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.white,
+      appBar: AppBar(
+        title: const Text("Settings", style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
+        backgroundColor: Colors.white,
+        elevation: 0,
+        automaticallyImplyLeading: false,
       ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _incrementCounter,
-        tooltip: 'Increment',
-        child: const Icon(Icons.add),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // --- User Info Row ---
+            Row(
+              children: [
+                CircleAvatar(
+                  radius: 30,
+                  backgroundColor: Colors.grey.shade300,
+                  child: const Icon(Icons.person, size: 40, color: Colors.white),
+                ),
+                const SizedBox(width: 15),
+                Expanded(
+                  child: TextField(
+                    controller: _usernameController,
+                    focusNode: _usernameFocusNode, // Attach FocusNode
+                    
+                    // FIX: Use readOnly instead of enabled!
+                    readOnly: !_isEditingUsername, 
+                    
+                    decoration: InputDecoration(
+                      labelText: "Username",
+                      border: const OutlineInputBorder(),
+                      fillColor: _isEditingUsername ? Colors.white : Colors.grey.shade50,
+                      filled: true,
+                      suffixIcon: IconButton(
+                        icon: Icon(_isEditingUsername ? Icons.check : Icons.edit, color: Colors.black),
+                        onPressed: () {
+                          setState(() {
+                            _isEditingUsername = !_isEditingUsername;
+                          });
+                          
+                          // Auto-focus the keyboard when editing starts
+                          if (_isEditingUsername) {
+                            _usernameFocusNode.requestFocus();
+                          }
+                        },
+                      ),
+                    ),
+                    style: const TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                ),
+              ],
+            ),
+
+            const SizedBox(height: 15),
+
+            // --- Email Row ---
+            Row(
+              children: [
+                const SizedBox(width: 75), 
+                Expanded(
+                  child: TextField(
+                    controller: _emailController,
+                    readOnly: true, 
+                    decoration: InputDecoration(
+                      labelText: "Email",
+                      border: const OutlineInputBorder(),
+                      filled: true,
+                      fillColor: Colors.grey.shade200,
+                      prefixIcon: const Icon(Icons.email_outlined, size: 20),
+                    ),
+                    style: TextStyle(color: Colors.grey.shade700),
+                  ),
+                ),
+              ],
+            ),
+
+            const SizedBox(height: 30),
+            const Divider(),
+            const SizedBox(height: 10),
+
+            // --- Preferences ---
+            const Row(
+              children: [
+                Text("Preferences", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+                SizedBox(width: 10),
+                Icon(Icons.edit, size: 20, color: Colors.grey),
+              ],
+            ),
+            const SizedBox(height: 15),
+
+            _buildPreferenceSection(
+              title: "Preferred Cuisines",
+              controllers: _cuisineControllers,
+              onAdd: () => _addItem(_cuisineControllers),
+              onRemove: (index) => _removeItem(_cuisineControllers, index),
+            ),
+
+            const SizedBox(height: 20),
+
+            _buildPreferenceSection(
+              title: "Dietary Restrictions",
+              controllers: _dietaryControllers,
+              onAdd: () => _addItem(_dietaryControllers),
+              onRemove: (index) => _removeItem(_dietaryControllers, index),
+            ),
+
+            const SizedBox(height: 40),
+
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton(
+                onPressed: () {
+                   Navigator.pushNamed(context, '/change_password');
+                },
+                style: OutlinedButton.styleFrom(
+                  padding: const EdgeInsets.all(15),
+                  side: const BorderSide(color: Colors.black),
+                ),
+                child: const Text("Change Password", style: TextStyle(color: Colors.black)),
+              ),
+            ),
+            const SizedBox(height: 15),
+
+            AuthButton(
+              text: "Save Changes",
+              onPressed: () {
+                setState(() {
+                  _isEditingUsername = false;
+                });
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Settings Saved!'), backgroundColor: Colors.green),
+                );
+              },
+            ),
+            const SizedBox(height: 15),
+
+            SizedBox(
+              width: double.infinity,
+              child: TextButton(
+                onPressed: () {
+                  Navigator.of(context).pushNamedAndRemoveUntil('/login', (Route<dynamic> route) => false);
+                },
+                child: const Text("Logout", style: TextStyle(color: Colors.red, fontSize: 16)),
+              ),
+            ),
+            
+            const SizedBox(height: 20),
+          ],
+        ),
       ),
+      bottomNavigationBar: const CustomBottomNav(currentIndex: 2),
     );
   }
 }
