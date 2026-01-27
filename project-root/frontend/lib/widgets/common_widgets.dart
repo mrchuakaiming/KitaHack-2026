@@ -29,13 +29,26 @@ class AuthBox extends StatelessWidget {
 class AuthTextField extends StatelessWidget {
   final String labelText;
   final bool obscureText;
+  final TextEditingController? controller;
+  // Add this: A function that returns an error string or null
+  final String? Function(String?)? validator;
 
-  const AuthTextField({super.key, required this.labelText, required this.obscureText});
+  const AuthTextField({
+    super.key,
+    required this.labelText,
+    required this.obscureText,
+    this.controller,
+    this.validator, // Add this to constructor
+  });
 
   @override
   Widget build(BuildContext context) {
-    return TextField(
+    // Change TextField to TextFormField to enable validation
+    return TextFormField(
+      controller: controller,
       obscureText: obscureText,
+      validator: validator, // Pass the validator here
+      autovalidateMode: AutovalidateMode.onUserInteraction, // Checks as user types
       decoration: InputDecoration(
         labelText: labelText,
         border: const OutlineInputBorder(),
@@ -65,4 +78,3 @@ class AuthButton extends StatelessWidget {
     );
   }
 }
-
