@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import '../widgets/common_widgets.dart';
+import '../widgets/common_widgets.dart'; // Uses your Premium Widgets
 import '../widgets/custom_bottom_nav.dart';
 
 class SettingsPage extends StatefulWidget {
@@ -13,7 +13,7 @@ class _SettingsPageState extends State<SettingsPage> {
   // --- Controllers ---
   final TextEditingController _usernameController = TextEditingController(text: "FoodieUser123");
   final TextEditingController _emailController = TextEditingController(text: "user@example.com"); 
-  final FocusNode _usernameFocusNode = FocusNode(); // Controls keyboard focus
+  final FocusNode _usernameFocusNode = FocusNode();
 
   final List<TextEditingController> _cuisineControllers = [];
   final List<TextEditingController> _dietaryControllers = [];
@@ -51,7 +51,7 @@ class _SettingsPageState extends State<SettingsPage> {
     });
   }
 
-  // --- NEW: Delete Account Logic ---
+  // --- Delete Account Logic (Preserved) ---
   void _handleDeleteAccount() {
     showDialog(
       context: context,
@@ -59,32 +59,21 @@ class _SettingsPageState extends State<SettingsPage> {
         return AlertDialog(
           title: const Text("Delete Account?"),
           content: const Text(
-            "Are you sure you want to delete your account? This action cannot be undone and you will lose all your data.",
+            "Are you sure? This action cannot be undone.",
             style: TextStyle(color: Colors.black87),
           ),
           actions: [
-            // Cancel Button
             TextButton(
               child: const Text("Cancel", style: TextStyle(color: Colors.grey)),
-              onPressed: () {
-                Navigator.of(context).pop(); // Close dialog
-              },
+              onPressed: () => Navigator.of(context).pop(),
             ),
-            // Confirm Delete Button
             TextButton(
               child: const Text("Delete", style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
               onPressed: () {
-                Navigator.of(context).pop(); // Close dialog first
-                
-                // Show confirmation message
+                Navigator.of(context).pop(); 
                 ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Account deleted successfully.'),
-                    backgroundColor: Colors.red,
-                  ),
+                  const SnackBar(content: Text('Account deleted.'), backgroundColor: Colors.red),
                 );
-
-                // Redirect to Login and clear history
                 Navigator.of(context).pushNamedAndRemoveUntil('/login', (Route<dynamic> route) => false);
               },
             ),
@@ -93,219 +82,236 @@ class _SettingsPageState extends State<SettingsPage> {
       },
     );
   }
-  // ---------------------------------
 
-  Widget _buildPreferenceSection({
-    required String title,
-    required List<TextEditingController> controllers,
-    required VoidCallback onAdd,
-    required Function(int) onRemove,
-  }) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Text(title, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-            IconButton(
-              icon: const Icon(Icons.add_circle_outline),
-              onPressed: onAdd,
-            ),
-          ],
-        ),
-        if (controllers.isEmpty)
-          const Padding(
-            padding: EdgeInsets.symmetric(vertical: 8.0),
-            child: Text("No preferences set", style: TextStyle(color: Colors.grey, fontStyle: FontStyle.italic)),
-          )
-        else
-          ...controllers.asMap().entries.map((entry) {
-            int index = entry.key;
-            return Padding(
-              padding: const EdgeInsets.only(bottom: 8.0),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: SizedBox(
-                      height: 45,
-                      child: TextField(
-                        controller: entry.value,
-                        decoration: const InputDecoration(
-                          border: OutlineInputBorder(),
-                          contentPadding: EdgeInsets.symmetric(horizontal: 10),
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 5),
-                  IconButton(
-                    icon: const Icon(Icons.delete_outline, color: Colors.red),
-                    onPressed: () => onRemove(index),
-                  ),
-                ],
-              ),
-            );
-          }),
-      ],
+  // Helper for Section Headers (Reused from Register Page design)
+  Widget _buildSectionHeader(String title, VoidCallback onAdd) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10, top: 10),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(
+            title,
+            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.black87),
+          ),
+          IconButton(
+            icon: const Icon(Icons.add_circle, color: kPrimaryColor),
+            onPressed: onAdd,
+            tooltip: "Add Item",
+          ),
+        ],
+      ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.white,
+      // Main.dart handles background color
       appBar: AppBar(
-        title: const Text("Settings", style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
-        backgroundColor: Colors.white,
+        title: const Text("Settings", style: TextStyle(color: Colors.black87, fontWeight: FontWeight.bold)),
+        backgroundColor: Colors.transparent,
         elevation: 0,
         automaticallyImplyLeading: false,
+        actions: [
+          // Quick Logout Icon
+          IconButton(
+            icon: const Icon(Icons.logout, color: Colors.redAccent),
+            onPressed: () {
+               Navigator.of(context).pushNamedAndRemoveUntil('/login', (Route<dynamic> route) => false);
+            },
+          )
+        ],
       ),
       body: SingleChildScrollView(
-        padding: const EdgeInsets.all(20),
+        padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // User Info
-            Row(
-              children: [
-                CircleAvatar(
-                  radius: 30,
-                  backgroundColor: Colors.grey.shade300,
-                  child: const Icon(Icons.person, size: 40, color: Colors.white),
-                ),
-                const SizedBox(width: 15),
-                Expanded(
-                  child: TextField(
+            // --- 1. Profile Avatar Section ---
+            const SizedBox(height: 10),
+            Center(
+              child: Stack(
+                children: [
+                  Container(
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      boxShadow: [
+                        BoxShadow(color: Colors.black.withOpacity(0.1), blurRadius: 10, offset: const Offset(0, 5))
+                      ],
+                    ),
+                    child: const CircleAvatar(
+                      radius: 50,
+                      backgroundColor: Colors.white,
+                      backgroundImage: AssetImage('assets/placeholder_user.png'), // Or remove backgroundImage if no asset
+                      child: Icon(Icons.person, size: 50, color: Colors.grey),
+                    ),
+                  ),
+                  Positioned(
+                    bottom: 0,
+                    right: 0,
+                    child: Container(
+                      padding: const EdgeInsets.all(4),
+                      decoration: const BoxDecoration(color: kPrimaryColor, shape: BoxShape.circle),
+                      child: const Icon(Icons.camera_alt, color: Colors.white, size: 20),
+                    ),
+                  )
+                ],
+              ),
+            ),
+            const SizedBox(height: 25),
+
+            // --- 2. Identity Card ---
+            AuthBox(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text("Identity", style: TextStyle(fontSize: 14, color: Colors.grey, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 15),
+                  
+                  // Username
+                  AuthTextField(
+                    labelText: "Username",
+                    obscureText: false,
                     controller: _usernameController,
                     focusNode: _usernameFocusNode,
-                    readOnly: !_isEditingUsername, 
-                    decoration: InputDecoration(
-                      labelText: "Username",
-                      border: const OutlineInputBorder(),
-                      fillColor: _isEditingUsername ? Colors.white : Colors.grey.shade50,
-                      filled: true,
-                      suffixIcon: IconButton(
-                        icon: Icon(_isEditingUsername ? Icons.check : Icons.edit, color: Colors.black),
-                        onPressed: () {
-                          setState(() {
-                            _isEditingUsername = !_isEditingUsername;
-                          });
-                          if (_isEditingUsername) {
-                            _usernameFocusNode.requestFocus();
-                          }
-                        },
-                      ),
+                    readOnly: !_isEditingUsername, // Toggle logic
+                    prefixIcon: const Icon(Icons.person_outline),
+                    suffixIcon: IconButton(
+                      icon: Icon(_isEditingUsername ? Icons.check_circle : Icons.edit, 
+                        color: _isEditingUsername ? Colors.green : Colors.grey),
+                      onPressed: () {
+                        setState(() {
+                          _isEditingUsername = !_isEditingUsername;
+                        });
+                        if (_isEditingUsername) {
+                          _usernameFocusNode.requestFocus();
+                        }
+                      },
                     ),
-                    style: const TextStyle(fontWeight: FontWeight.bold),
                   ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 15),
-            Row(
-              children: [
-                const SizedBox(width: 75), 
-                Expanded(
-                  child: TextField(
+
+                  // Email
+                  AuthTextField(
+                    labelText: "Email",
+                    obscureText: false,
                     controller: _emailController,
-                    readOnly: true, 
-                    decoration: InputDecoration(
-                      labelText: "Email",
-                      border: const OutlineInputBorder(),
-                      filled: true,
-                      fillColor: Colors.grey.shade200,
-                      prefixIcon: const Icon(Icons.email_outlined, size: 20),
-                    ),
-                    style: TextStyle(color: Colors.grey.shade700),
+                    readOnly: true, // Always locked
+                    prefixIcon: const Icon(Icons.email_outlined),
+                    suffixIcon: const Icon(Icons.lock, size: 18, color: Colors.grey), // Visual cue it's locked
                   ),
-                ),
-              ],
+                ],
+              ),
+            ),
+
+            const SizedBox(height: 20),
+
+            // --- 3. Taste Profile Card ---
+            AuthBox(
+              child: Column(
+                children: [
+                  // Cuisines Header
+                  _buildSectionHeader("My Cuisines", () => _addItem(_cuisineControllers)),
+                  
+                  if (_cuisineControllers.isEmpty) 
+                    const Padding(
+                      padding: EdgeInsets.all(8.0),
+                      child: Text("No cuisines added yet.", style: TextStyle(color: Colors.grey)),
+                    ),
+                    
+                  ..._cuisineControllers.asMap().entries.map((entry) {
+                    return Row(
+                      children: [
+                        Expanded(
+                          child: AuthTextField(
+                            labelText: "Cuisine",
+                            obscureText: false,
+                            controller: entry.value,
+                            prefixIcon: const Icon(Icons.restaurant, size: 18),
+                          ),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.remove_circle_outline, color: Colors.red),
+                          onPressed: () => _removeItem(_cuisineControllers, entry.key),
+                        ),
+                      ],
+                    );
+                  }),
+
+                  const Divider(height: 30),
+
+                  // Dietary Header
+                  _buildSectionHeader("Dietary Restrictions", () => _addItem(_dietaryControllers)),
+
+                  if (_dietaryControllers.isEmpty) 
+                    const Padding(
+                      padding: EdgeInsets.all(8.0),
+                      child: Text("No restrictions.", style: TextStyle(color: Colors.grey)),
+                    ),
+
+                  ..._dietaryControllers.asMap().entries.map((entry) {
+                    return Row(
+                      children: [
+                        Expanded(
+                          child: AuthTextField(
+                            labelText: "Restriction",
+                            obscureText: false,
+                            controller: entry.value,
+                            prefixIcon: const Icon(Icons.warning_amber_rounded, size: 18),
+                          ),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.remove_circle_outline, color: Colors.red),
+                          onPressed: () => _removeItem(_dietaryControllers, entry.key),
+                        ),
+                      ],
+                    );
+                  }),
+                ],
+              ),
             ),
 
             const SizedBox(height: 30),
-            const Divider(),
-            const SizedBox(height: 10),
 
-            // Preferences
-            const Row(
-              children: [
-                Text("Preferences", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-                SizedBox(width: 10),
-                Icon(Icons.edit, size: 20, color: Colors.grey),
-              ],
-            ),
-            const SizedBox(height: 15),
-
-            _buildPreferenceSection(
-              title: "Preferred Cuisines",
-              controllers: _cuisineControllers,
-              onAdd: () => _addItem(_cuisineControllers),
-              onRemove: (index) => _removeItem(_cuisineControllers, index),
-            ),
-            const SizedBox(height: 20),
-            _buildPreferenceSection(
-              title: "Dietary Restrictions",
-              controllers: _dietaryControllers,
-              onAdd: () => _addItem(_dietaryControllers),
-              onRemove: (index) => _removeItem(_dietaryControllers, index),
-            ),
-
-            const SizedBox(height: 40),
-
-            // Change Password
+            // --- 4. Actions ---
+            
+            // Change Password (Secondary Action)
             SizedBox(
               width: double.infinity,
+              height: 55,
               child: OutlinedButton(
-                onPressed: () {
-                   Navigator.pushNamed(context, '/change_password');
-                },
+                onPressed: () => Navigator.pushNamed(context, '/change_password'),
                 style: OutlinedButton.styleFrom(
-                  padding: const EdgeInsets.all(15),
-                  side: const BorderSide(color: Colors.black),
+                  side: BorderSide(color: Colors.grey.shade400),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
                 ),
-                child: const Text("Change Password", style: TextStyle(color: Colors.black)),
+                child: const Text("Change Password", style: TextStyle(color: Colors.black87, fontSize: 16)),
               ),
             ),
+            
             const SizedBox(height: 15),
 
-            // Save Changes
+            // Save Changes (Primary Action)
             AuthButton(
               text: "Save Changes",
               onPressed: () {
-                setState(() {
-                  _isEditingUsername = false;
-                });
+                setState(() => _isEditingUsername = false);
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(content: Text('Settings Saved!'), backgroundColor: Colors.green),
                 );
               },
             ),
+
             const SizedBox(height: 30),
+
+            // Delete Account (Danger Zone)
+            TextButton(
+              onPressed: _handleDeleteAccount,
+              child: const Text(
+                "Delete Account",
+                style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold, fontSize: 14),
+              ),
+            ),
             
-            const Divider(), // Separator for Danger Zone
-
-            // Logout
-            SizedBox(
-              width: double.infinity,
-              child: TextButton(
-                onPressed: () {
-                  Navigator.of(context).pushNamedAndRemoveUntil('/login', (Route<dynamic> route) => false);
-                },
-                child: const Text("Logout", style: TextStyle(color: Colors.black54, fontSize: 16)),
-              ),
-            ),
-
-            // --- Delete Account Button ---
-            Center(
-              child: TextButton(
-                onPressed: _handleDeleteAccount,
-                child: const Text(
-                  "Delete Account",
-                  style: TextStyle(color: Colors.red, fontSize: 14, fontWeight: FontWeight.bold),
-                ),
-              ),
-            ),
             const SizedBox(height: 20),
           ],
         ),

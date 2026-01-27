@@ -3,7 +3,6 @@
 
 import 'package:flutter/material.dart';
 import '../widgets/common_widgets.dart';
-import 'login.dart';
 
 class RegisterPage extends StatefulWidget {
   const RegisterPage({super.key});
@@ -13,20 +12,21 @@ class RegisterPage extends StatefulWidget {
 }
 
 class _RegisterPageState extends State<RegisterPage> {
-  // 1. Create a GlobalKey to identify and validate the Form
   final _formKey = GlobalKey<FormState>();
-
-  final TextEditingController _nameController = TextEditingController();
+  
+  // Controllers
+  final TextEditingController _usernameController = TextEditingController();
   final TextEditingController _emailController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
   final TextEditingController _confirmPasswordController = TextEditingController();
 
+  // Dynamic Lists
   final List<TextEditingController> _cuisineControllers = [];
   final List<TextEditingController> _dietaryControllers = [];
 
   @override
   void dispose() {
-    _nameController.dispose();
+    _usernameController.dispose();
     _emailController.dispose();
     _passwordController.dispose();
     _confirmPasswordController.dispose();
@@ -35,84 +35,58 @@ class _RegisterPageState extends State<RegisterPage> {
     super.dispose();
   }
 
-  void _addItem(List<TextEditingController> list) {
+  // --- Dynamic Field Logic ---
+  void _addCuisine() {
     setState(() {
-      list.add(TextEditingController());
+      _cuisineControllers.add(TextEditingController());
     });
   }
 
-  void _removeItem(List<TextEditingController> list, int index) {
+  void _removeCuisine(int index) {
     setState(() {
-      list[index].dispose();
-      list.removeAt(index);
+      _cuisineControllers[index].dispose();
+      _cuisineControllers.removeAt(index);
     });
   }
 
-  // Updated builder to use TextFormField for dynamic fields too
-  Widget _buildDynamicSection({
-    required String title,
-    required List<TextEditingController> controllers,
-    required VoidCallback onAdd,
-    required Function(int) onRemove,
-  }) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+  void _addDietary() {
+    setState(() {
+      _dietaryControllers.add(TextEditingController());
+    });
+  }
+
+  void _removeDietary(int index) {
+    setState(() {
+      _dietaryControllers[index].dispose();
+      _dietaryControllers.removeAt(index);
+    });
+  }
+  // ---------------------------
+
+  void _handleRegister() {
+    if (_formKey.currentState!.validate()) {
+      // Simulate registration
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Account Created! Please Login.')),
+      );
+      Navigator.pop(context); // Return to Login
+    }
+  }
+
+  // Helper for Section Headers inside the form
+  Widget _buildSectionTitle(String title, VoidCallback onAdd) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Text(title, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-            IconButton(
-              onPressed: onAdd,
-              icon: const Icon(Icons.add_circle_outline, color: Colors.black),
-            ),
-          ],
+        Text(
+          title,
+          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.black87),
         ),
-        if (controllers.isEmpty)
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 10),
-            decoration: BoxDecoration(
-              color: Colors.grey.shade100,
-              borderRadius: BorderRadius.circular(4),
-              border: Border.all(color: Colors.grey.shade300),
-            ),
-            child: Text("No preferences", style: TextStyle(color: Colors.grey.shade600, fontStyle: FontStyle.italic)),
-          )
-        else
-          ...controllers.asMap().entries.map((entry) {
-            int index = entry.key;
-            TextEditingController controller = entry.value;
-            return Padding(
-              padding: const EdgeInsets.only(bottom: 8.0),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start, // Align to top in case of error text
-                children: [
-                  Expanded(
-                    child: TextFormField( // Changed to TextFormField
-                      controller: controller,
-                      validator: (value) {
-                        if (value == null || value.isEmpty) {
-                          return 'Please enter a value';
-                        }
-                        return null;
-                      },
-                      decoration: InputDecoration(
-                        hintText: "Enter $title",
-                        contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 15),
-                        border: const OutlineInputBorder(),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 5),
-                  IconButton(
-                    icon: const Icon(Icons.delete_outline, color: Colors.red),
-                    onPressed: () => onRemove(index),
-                  ),
-                ],
-              ),
-            );
-          }),
+        IconButton(
+          onPressed: onAdd,
+          icon: const Icon(Icons.add_circle, color: kPrimaryColor),
+          tooltip: "Add $title",
+        ),
       ],
     );
   }
@@ -120,139 +94,128 @@ class _RegisterPageState extends State<RegisterPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.white,
-      body: Center(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(20),
-          child: AuthBox(
-            // 2. Wrap everything in a Form widget using the key
-            child: Form(
-              key: _formKey,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Text(
-                    "Register",
-                    style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: Colors.black),
-                  ),
-                  const SizedBox(height: 20),
-                  
-                  // Name Field
-                  AuthTextField(
-                    labelText: "Name",
-                    obscureText: false,
-                    controller: _nameController,
-                    validator: (value) {
-                      if (value == null || value.isEmpty) {
-                        return 'Name is required';
-                      }
-                      return null;
-                    },
-                  ),
-                  const SizedBox(height: 10),
-                  
-                  // Email Field
-                  AuthTextField(
-                    labelText: "Email",
-                    obscureText: false,
-                    controller: _emailController,
-                    validator: (value) {
-                      if (value == null || value.isEmpty) return 'Email is required';
-                      if (!value.contains('@')) return 'Enter a valid email';
-                      return null;
-                    },
-                  ),
-                  const SizedBox(height: 10),
-                  
-                  // Password Field
-                  AuthTextField(
-                    labelText: "Password",
-                    obscureText: true,
-                    controller: _passwordController,
-                    validator: (value) {
-                      if (value == null || value.isEmpty) return 'Password is required';
-                      if (value.length < 6) return 'Password must be at least 6 chars';
-                      return null;
-                    },
-                  ),
-                  const SizedBox(height: 10),
-                  
-                  // Confirm Password Field
-                  AuthTextField(
-                    labelText: "Confirm Password",
-                    obscureText: true,
-                    controller: _confirmPasswordController,
-                    validator: (value) {
-                      if (value == null || value.isEmpty) return 'Please confirm password';
-                      if (value != _passwordController.text) return 'Passwords do not match';
-                      return null;
-                    },
-                  ),
-                  
-                  const SizedBox(height: 20),
-                  const Divider(),
-                  
-                  _buildDynamicSection(
-                    title: "Preferred Cuisines",
-                    controllers: _cuisineControllers,
-                    onAdd: () => _addItem(_cuisineControllers),
-                    onRemove: (index) => _removeItem(_cuisineControllers, index),
-                  ),
+      appBar: AppBar(
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back, color: Colors.black87),
+          onPressed: () => Navigator.pop(context),
+        ),
+      ),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(25, 0, 25, 25),
+        child: Column(
+          children: [
+            // Header
+            const AuthHeader(
+              title: "Create Account",
+              subtitle: "Join us and decide what to eat.",
+            ),
 
-                  const SizedBox(height: 15),
+            AuthBox(
+              child: Form(
+                key: _formKey,
+                child: Column(
+                  children: [
+                    // --- Personal Info ---
+                    AuthTextField(
+                      labelText: "Username",
+                      obscureText: false,
+                      controller: _usernameController,
+                      prefixIcon: const Icon(Icons.person_outline),
+                      validator: (val) => val!.isEmpty ? 'Required' : null,
+                    ),
+                    AuthTextField(
+                      labelText: "Email",
+                      obscureText: false,
+                      controller: _emailController,
+                      prefixIcon: const Icon(Icons.email_outlined),
+                      validator: (val) => !val!.contains('@') ? 'Invalid Email' : null,
+                    ),
+                    AuthTextField(
+                      labelText: "Password",
+                      obscureText: true,
+                      controller: _passwordController,
+                      prefixIcon: const Icon(Icons.lock_outline),
+                      validator: (val) => val!.length < 6 ? 'Min 6 chars' : null,
+                    ),
+                    AuthTextField(
+                      labelText: "Confirm Password",
+                      obscureText: true,
+                      controller: _confirmPasswordController,
+                      // FIXED: Changed to valid icon 'Icons.lock'
+                      prefixIcon: const Icon(Icons.lock), 
+                      validator: (val) => val != _passwordController.text ? 'Mismatch' : null,
+                    ),
 
-                  _buildDynamicSection(
-                    title: "Dietary Restrictions",
-                    controllers: _dietaryControllers,
-                    onAdd: () => _addItem(_dietaryControllers),
-                    onRemove: (index) => _removeItem(_dietaryControllers, index),
-                  ),
+                    const SizedBox(height: 10),
+                    const Divider(),
+                    const SizedBox(height: 10),
 
-                  const SizedBox(height: 30),
-
-                  AuthButton(
-                    text: "Register",
-                    onPressed: () {
-                      // 3. Trigger Validation
-                      if (_formKey.currentState!.validate()) {
-                        // If everything is valid, proceed
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text('Processing Registration...'),
-                            backgroundColor: Colors.green,
-                          ),
-                        );
-                        // TODO: Add backend registration logic here
-                        
-                      } else {
-                        // If invalid, show a reminder
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text('Please fill in all details correctly.'),
-                            backgroundColor: Colors.red,
-                          ),
-                        );
-                      }
-                    },
-                  ),
-                  const SizedBox(height: 10),
-                  TextButton(
-                    onPressed: () {
-                      Navigator.pushReplacement(
-                        context,
-                        MaterialPageRoute(builder: (context) => const LoginPage()),
+                    // --- Preferences ---
+                    _buildSectionTitle("Preferred Cuisines", _addCuisine),
+                    
+                    ..._cuisineControllers.asMap().entries.map((entry) {
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 10.0),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: AuthTextField(
+                                labelText: "Cuisine ${entry.key + 1}",
+                                obscureText: false,
+                                controller: entry.value,
+                              ),
+                            ),
+                            const SizedBox(width: 5),
+                            IconButton(
+                              icon: const Icon(Icons.delete_outline, color: Colors.red),
+                              onPressed: () => _removeCuisine(entry.key),
+                            ),
+                          ],
+                        ),
                       );
-                    },
-                    child: const Text("Already have an account? Login", style: TextStyle(color: Colors.black)),
-                  ),
-                ],
+                    }),
+
+                    const SizedBox(height: 10),
+
+                    _buildSectionTitle("Dietary Restrictions", _addDietary),
+                    ..._dietaryControllers.asMap().entries.map((entry) {
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 10.0),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: AuthTextField(
+                                labelText: "Restriction ${entry.key + 1}",
+                                obscureText: false,
+                                controller: entry.value,
+                              ),
+                            ),
+                            const SizedBox(width: 5),
+                            IconButton(
+                              icon: const Icon(Icons.delete_outline, color: Colors.red),
+                              onPressed: () => _removeDietary(entry.key),
+                            ),
+                          ],
+                        ),
+                      );
+                    }),
+
+                    const SizedBox(height: 20),
+
+                    // --- Sign Up Button ---
+                    AuthButton(
+                      text: "Sign Up",
+                      onPressed: _handleRegister,
+                    ),
+                  ],
+                ),
               ),
             ),
-          ),
+          ],
         ),
       ),
     );
   }
 }
-
-
