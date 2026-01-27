@@ -19,10 +19,15 @@ class _HomePageState extends State<HomePage> {
     super.dispose();
   }
 
+  // Implementation 1: Clipboard Logic
   void _copyToClipboard(String code) {
     Clipboard.setData(ClipboardData(text: code));
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Room code $code copied!'), duration: const Duration(seconds: 1)),
+      SnackBar(
+        content: Text('Room code $code copied!'),
+        duration: const Duration(seconds: 1),
+        backgroundColor: Colors.green,
+      ),
     );
   }
 
@@ -48,7 +53,6 @@ class _HomePageState extends State<HomePage> {
             ),
             const SizedBox(height: 15),
             
-            // Reusing AuthBox for consistent styling
             AuthBox(
               child: Column(
                 children: [
@@ -61,13 +65,20 @@ class _HomePageState extends State<HomePage> {
                     ),
                   ),
                   const SizedBox(height: 15),
+                  
+                  // Implementation 2: Navigation to JoinRoomPage
                   AuthButton(
                     text: "Join",
                     onPressed: () {
                       if (_roomCodeController.text.isNotEmpty) {
-                        // TODO: Logic to join room
+                        // Pass the entered code to the next page if you want (arguments not shown here for simplicity)
+                        Navigator.pushNamed(context, '/join_room'); 
+                      } else {
                         ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(content: Text('Joining Room: ${_roomCodeController.text}')),
+                          const SnackBar(
+                            content: Text('Please enter a room code first'),
+                            backgroundColor: Colors.red,
+                          ),
                         );
                       }
                     },
@@ -78,7 +89,7 @@ class _HomePageState extends State<HomePage> {
 
             const SizedBox(height: 40),
 
-            // --- Section 2: Rooms you host ---
+            // --- Section 3: Rooms you host (Preserved) ---
             const Text(
               "Rooms you host",
               style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
@@ -96,15 +107,15 @@ class _HomePageState extends State<HomePage> {
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Column(
+                  const Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text("Lunch with Team", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-                      const SizedBox(height: 5),
+                      Text("Lunch with Team", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                      SizedBox(height: 5),
                       Row(
                         children: [
-                          const Text("Code: ", style: TextStyle(color: Colors.grey)),
-                          const Text("X92-B41", style: TextStyle(fontWeight: FontWeight.bold, letterSpacing: 1.5)),
+                          Text("Code: ", style: TextStyle(color: Colors.grey)),
+                          Text("X92-B41", style: TextStyle(fontWeight: FontWeight.bold, letterSpacing: 1.5)),
                         ],
                       ),
                     ],
@@ -121,7 +132,7 @@ class _HomePageState extends State<HomePage> {
         ),
       ),
       
-      // Add the Navigation Bar
+      // Bottom Navigation
       bottomNavigationBar: const CustomBottomNav(currentIndex: 1), // Index 1 is Home
     );
   }

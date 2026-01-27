@@ -10,11 +10,10 @@ class SettingsPage extends StatefulWidget {
 }
 
 class _SettingsPageState extends State<SettingsPage> {
+  // --- Controllers ---
   final TextEditingController _usernameController = TextEditingController(text: "FoodieUser123");
   final TextEditingController _emailController = TextEditingController(text: "user@example.com"); 
-  
-  // 1. Add a FocusNode to control the keyboard
-  final FocusNode _usernameFocusNode = FocusNode();
+  final FocusNode _usernameFocusNode = FocusNode(); // Controls keyboard focus
 
   final List<TextEditingController> _cuisineControllers = [];
   final List<TextEditingController> _dietaryControllers = [];
@@ -33,7 +32,7 @@ class _SettingsPageState extends State<SettingsPage> {
   void dispose() {
     _usernameController.dispose();
     _emailController.dispose();
-    _usernameFocusNode.dispose(); // Dispose the focus node
+    _usernameFocusNode.dispose();
     for (var c in _cuisineControllers) c.dispose();
     for (var c in _dietaryControllers) c.dispose();
     super.dispose();
@@ -51,6 +50,50 @@ class _SettingsPageState extends State<SettingsPage> {
       list.removeAt(index);
     });
   }
+
+  // --- NEW: Delete Account Logic ---
+  void _handleDeleteAccount() {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Text("Delete Account?"),
+          content: const Text(
+            "Are you sure you want to delete your account? This action cannot be undone and you will lose all your data.",
+            style: TextStyle(color: Colors.black87),
+          ),
+          actions: [
+            // Cancel Button
+            TextButton(
+              child: const Text("Cancel", style: TextStyle(color: Colors.grey)),
+              onPressed: () {
+                Navigator.of(context).pop(); // Close dialog
+              },
+            ),
+            // Confirm Delete Button
+            TextButton(
+              child: const Text("Delete", style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
+              onPressed: () {
+                Navigator.of(context).pop(); // Close dialog first
+                
+                // Show confirmation message
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Account deleted successfully.'),
+                    backgroundColor: Colors.red,
+                  ),
+                );
+
+                // Redirect to Login and clear history
+                Navigator.of(context).pushNamedAndRemoveUntil('/login', (Route<dynamic> route) => false);
+              },
+            ),
+          ],
+        );
+      },
+    );
+  }
+  // ---------------------------------
 
   Widget _buildPreferenceSection({
     required String title,
@@ -123,7 +166,7 @@ class _SettingsPageState extends State<SettingsPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // --- User Info Row ---
+            // User Info
             Row(
               children: [
                 CircleAvatar(
@@ -135,11 +178,8 @@ class _SettingsPageState extends State<SettingsPage> {
                 Expanded(
                   child: TextField(
                     controller: _usernameController,
-                    focusNode: _usernameFocusNode, // Attach FocusNode
-                    
-                    // FIX: Use readOnly instead of enabled!
+                    focusNode: _usernameFocusNode,
                     readOnly: !_isEditingUsername, 
-                    
                     decoration: InputDecoration(
                       labelText: "Username",
                       border: const OutlineInputBorder(),
@@ -151,8 +191,6 @@ class _SettingsPageState extends State<SettingsPage> {
                           setState(() {
                             _isEditingUsername = !_isEditingUsername;
                           });
-                          
-                          // Auto-focus the keyboard when editing starts
                           if (_isEditingUsername) {
                             _usernameFocusNode.requestFocus();
                           }
@@ -164,10 +202,7 @@ class _SettingsPageState extends State<SettingsPage> {
                 ),
               ],
             ),
-
             const SizedBox(height: 15),
-
-            // --- Email Row ---
             Row(
               children: [
                 const SizedBox(width: 75), 
@@ -192,7 +227,7 @@ class _SettingsPageState extends State<SettingsPage> {
             const Divider(),
             const SizedBox(height: 10),
 
-            // --- Preferences ---
+            // Preferences
             const Row(
               children: [
                 Text("Preferences", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
@@ -208,9 +243,7 @@ class _SettingsPageState extends State<SettingsPage> {
               onAdd: () => _addItem(_cuisineControllers),
               onRemove: (index) => _removeItem(_cuisineControllers, index),
             ),
-
             const SizedBox(height: 20),
-
             _buildPreferenceSection(
               title: "Dietary Restrictions",
               controllers: _dietaryControllers,
@@ -220,6 +253,7 @@ class _SettingsPageState extends State<SettingsPage> {
 
             const SizedBox(height: 40),
 
+            // Change Password
             SizedBox(
               width: double.infinity,
               child: OutlinedButton(
@@ -235,6 +269,7 @@ class _SettingsPageState extends State<SettingsPage> {
             ),
             const SizedBox(height: 15),
 
+            // Save Changes
             AuthButton(
               text: "Save Changes",
               onPressed: () {
@@ -246,18 +281,31 @@ class _SettingsPageState extends State<SettingsPage> {
                 );
               },
             ),
-            const SizedBox(height: 15),
+            const SizedBox(height: 30),
+            
+            const Divider(), // Separator for Danger Zone
 
+            // Logout
             SizedBox(
               width: double.infinity,
               child: TextButton(
                 onPressed: () {
                   Navigator.of(context).pushNamedAndRemoveUntil('/login', (Route<dynamic> route) => false);
                 },
-                child: const Text("Logout", style: TextStyle(color: Colors.red, fontSize: 16)),
+                child: const Text("Logout", style: TextStyle(color: Colors.black54, fontSize: 16)),
               ),
             ),
-            
+
+            // --- Delete Account Button ---
+            Center(
+              child: TextButton(
+                onPressed: _handleDeleteAccount,
+                child: const Text(
+                  "Delete Account",
+                  style: TextStyle(color: Colors.red, fontSize: 14, fontWeight: FontWeight.bold),
+                ),
+              ),
+            ),
             const SizedBox(height: 20),
           ],
         ),
