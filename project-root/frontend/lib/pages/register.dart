@@ -30,8 +30,12 @@ class _RegisterPageState extends State<RegisterPage> {
     _emailController.dispose();
     _passwordController.dispose();
     _confirmPasswordController.dispose();
-    for (var c in _cuisineControllers) c.dispose();
-    for (var c in _dietaryControllers) c.dispose();
+    for (var c in _cuisineControllers) {
+      c.dispose();
+    }
+    for (var c in _dietaryControllers) {
+      c.dispose();
+    }
     super.dispose();
   }
 

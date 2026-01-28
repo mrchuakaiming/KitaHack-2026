@@ -33,8 +33,12 @@ class _SettingsPageState extends State<SettingsPage> {
     _usernameController.dispose();
     _emailController.dispose();
     _usernameFocusNode.dispose();
-    for (var c in _cuisineControllers) c.dispose();
-    for (var c in _dietaryControllers) c.dispose();
+    for (var c in _cuisineControllers) {
+      c.dispose();
+    }
+    for (var c in _dietaryControllers) {
+      c.dispose();
+    }
     super.dispose();
   }
 
