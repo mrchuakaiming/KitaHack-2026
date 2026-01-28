@@ -5,7 +5,11 @@ import 'app.dart';
 import 'viewmodels/home_vm.dart';
 import 'viewmodels/room_vm.dart';
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await Firebase.initializeApp(
+    options: DefaultFirebaseOptions.currentPlatform,
+  );
   runApp(const MyApp());
 }
 
@@ -31,7 +35,7 @@ class MyApp extends StatelessWidget {
           colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFFFF7043)),
           useMaterial3: true,
         ),
-        initialRoute: '/login',
+        home: const AuthWrapper(),
         routes: AppRoutes.routes,
       ),
     );
