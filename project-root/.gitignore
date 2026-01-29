@@ -1,0 +1,74 @@
+# ===========================
+# macOS / Miscellaneous
+# ===========================
+.DS_Store
+*.log
+*.pyc
+*.swp
+*.class
+*.tmp
+*.bak
+*.old
+
+# ===========================
+# Flutter / Dart
+# ===========================
+.dart_tool/
+.packages
+.pub/
+build/
+**/doc/api/
+.flutter-plugins
+.flutter-plugins-dependencies
+.pub-cache/
+.flutter-plugins-dependencies
+**/ios/Flutter/.last_build_id
+
+# ===========================
+# Android
+# ===========================
+/android/.gradle/
+/android/app/debug
+/android/app/profile
+/android/app/release
+/local.properties
+
+# ===========================
+# Xcode / iOS
+# ===========================
+ios/Flutter/Flutter.podspec
+ios/Pods/
+ios/Runner.xcworkspace/
+ios/Runner/GeneratedPluginRegistrant.*
+
+# ===========================
+# Python backend
+# ===========================
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.env
+venv/
+.env/
+
+# ===========================
+# IDEs
+# ===========================
+# VS Code
+.vscode/
+
+# IntelliJ / Android Studio
+*.iml
+*.ipr
+*.iws
+.idea/
+
+# ===========================
+# Other
+# ===========================
+*.swp
+*.lock
+*.tmp
+*.bak
+*.old
