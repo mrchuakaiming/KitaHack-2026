@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 // Correct Imports for your structure
 import 'view/login.dart';
 import 'view/register.dart';
-import 'view/home_page.dart';
+import 'view/home.dart';
 import 'view/room.dart';
 import 'view/settings_page.dart';
 import 'view/change_password.dart';
