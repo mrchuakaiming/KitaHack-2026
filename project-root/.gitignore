@@ -2,6 +2,7 @@
 # macOS / Miscellaneous
 # ===========================
 .DS_Store
+../.DS_Store
 *.log
 *.pyc
 *.swp
