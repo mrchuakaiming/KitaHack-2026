@@ -11,9 +11,9 @@ import '../models/ai_result_model.dart';
 /// - Receiving AI recommendation
 /// - Returning AI result and optionally a user-friendly message
 class AIService {
-  final String backendBaseUrl;
+  final String serverBaseUrl; //Replace this with server URL, e.g., "https://yourserver.com"
 
-  AIService({required this.backendBaseUrl});
+  AIService({required this.serverBaseUrl});
 
   /// Generate AI recommendation for a room
   ///
@@ -26,35 +26,46 @@ class AIService {
     required RoomParticipants room,
     required List<String> selectedPlaceIds,
   }) async {
-    final url = Uri.parse('$backendBaseUrl/ai/generate'); // your backend endpoint
+    //The endpoint that calls your Python server route /ai/generate
+    final url = Uri.parse('$serverBaseUrl/ai/generate'); // <-- this calls the server-side
 
-    // Prepare payload
+    // Prepare payload to send to server
+    //  Keys must match server-side expected JSON fields:
+    // "participants" -> server-side expects room_data["participants"]
+    // "selected_place_ids" -> server-side expects room_data["selected_place_ids"]
     final payload = {
-      "participants": room.participants,
+      "participants": room.participants, // RoomParticipants list maps directly
       "selected_place_ids": selectedPlaceIds,
     };
 
     try {
+      // This is the actual server call
       final response = await http.post(
-        url,
-        headers: {"Content-Type": "application/json"},
-        body: jsonEncode(payload),
+        url, // server route
+        headers: {"Content-Type": "application/json"}, // server expects JSON
+        body: jsonEncode(payload), // serialize Dart Map -> JSON string
       );
 
+      // Check for server-side HTTP errors
       if (response.statusCode != 200) {
         return AIResultModel(
           status: "error",
-          reasoning: "Backend returned status ${response.statusCode}",
+          reasoning: "Server returned status ${response.statusCode}", // optional: display in UI
         );
       }
 
+      // Parse JSON response from server
       final responseJson = jsonDecode(response.body) as Map<String, dynamic>;
 
+      // Converts server response into AIResultModel (Dart-side)
+      // This will include keys returned by the Python server:
+      // "status", "recommended_place_id", "recommended_cuisine", "reasoning", "user_message"
       return AIResultModel.fromJson(responseJson);
     } catch (e) {
+      // Catch network errors / JSON parsing errors
       return AIResultModel(
         status: "error",
-        reasoning: "AI request failed: $e",
+        reasoning: "AI request failed: $e", // can be displayed in the UI
       );
     }
   }
