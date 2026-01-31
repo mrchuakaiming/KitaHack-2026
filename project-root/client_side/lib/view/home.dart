@@ -2,10 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
-// IMPORTS (Same Folder)
+// IMPORTS
 import 'common_widgets.dart'; 
-
-// IMPORTS (ViewModels - One folder up)
 import '../viewmodels/home_vm.dart';
 import '../viewmodels/room_vm.dart';
 
@@ -32,39 +30,63 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  void _onBottomNavTap(int index) {
-    if (index == 0) { // Burger Button (Create)
+  // --- NAVIGATION & ACTIONS ---
+
+  void _onBottomNavTap(int index) async {
+    if (index == 0) { // Burger Button (Create New Room)
       final homeVM = context.read<HomeViewModel>();
       
-      // Attempt Creation (Checks 5 room limit)
-      String? error = homeVM.createNewRoom();
+      // 1. Attempt to create new room
+      String? error = await homeVM.newRoom();
 
       if (error == null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("New Room Created!"), backgroundColor: Color(0xFFFF7043)),
-        );
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text("New Room Created!"), backgroundColor: kPrimaryColor),
+          );
+        }
       } else {
-        // Show Error Dialog
-        showDialog(
-          context: context,
-          builder: (ctx) => AlertDialog(
-            title: const Text("Limit Reached"),
-            content: Text(error),
-            actions: [
-              TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("OK"))
-            ],
-          ),
-        );
+        // 2. Show Error if limit reached
+        if (mounted) {
+          showDialog(
+            context: context,
+            builder: (ctx) => AlertDialog(
+              title: const Text("Limit Reached"),
+              content: Text(error),
+              actions: [
+                TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("OK"))
+              ],
+            ),
+          );
+        }
       }
     } else if (index == 2) { // Profile
       Navigator.pushNamed(context, '/settings');
     }
   }
 
+  Future<void> _handleJoin(String code) async {
+    final homeVM = context.read<HomeViewModel>();
+    final roomVM = context.read<RoomViewModel>();
+
+    // 1. Validate existence via HomeVM
+    bool canJoin = await homeVM.joinRoom(code);
+    
+    if (canJoin && mounted) {
+       // 2. Initialize the Session in RoomVM
+       await roomVM.joinRoom(code);
+       
+       // 3. Navigate to Lobby
+       Navigator.pushNamed(context, '/room');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final homeVM = context.watch<HomeViewModel>();
-    final roomVM = context.watch<RoomViewModel>();
+    
+    // We only read RoomVM here to check loading state if needed, 
+    // but mainly HomeVM drives this page.
 
     return Scaffold(
       appBar: AppBar(
@@ -77,7 +99,7 @@ class _HomePageState extends State<HomePage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // JOIN SECTION
+            // --- JOIN SECTION ---
             const Text("Join room", style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
             const SizedBox(height: 15),
             AuthBox(
@@ -88,22 +110,12 @@ class _HomePageState extends State<HomePage> {
                     obscureText: false,
                     controller: _roomCodeController,
                     prefixIcon: const Icon(Icons.vpn_key),
-                    validator: (_) => homeVM.joinError, // Shows "Room ID not found"
+                    validator: (_) => homeVM.joinError, // Displays "Room ID not found"
                   ),
                   const SizedBox(height: 15),
                   AuthButton(
-                    text: roomVM.isLoading ? "Joining..." : "Join",
-                    onPressed: () async {
-                      final code = _roomCodeController.text;
-                      // 1. Validate (Must exist in list)
-                      if (homeVM.validateCode(code)) {
-                        // 2. Join Shared Session
-                        bool success = await context.read<RoomViewModel>().joinRoom(code);
-                        if (success && mounted) {
-                           Navigator.pushNamed(context, '/room');
-                        }
-                      }
-                    },
+                    text: homeVM.isLoading ? "Joining..." : "Join",
+                    onPressed: () => _handleJoin(_roomCodeController.text),
                   ),
                 ],
               ),
@@ -111,7 +123,7 @@ class _HomePageState extends State<HomePage> {
 
             const SizedBox(height: 40),
             
-            // LIST SECTION
+            // --- HOSTED ROOMS LIST ---
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
@@ -124,7 +136,7 @@ class _HomePageState extends State<HomePage> {
             if (homeVM.hostedRooms.isEmpty)
               const Padding(
                 padding: EdgeInsets.all(20),
-                child: Center(child: Text("No rooms yet.", style: TextStyle(color: Colors.grey))),
+                child: Center(child: Text("No rooms yet. Tap the Burger button to create one!", style: TextStyle(color: Colors.grey))),
               )
             else
               ...homeVM.hostedRooms.map((room) => Container(
@@ -138,12 +150,13 @@ class _HomePageState extends State<HomePage> {
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
+                    // Room ID Display
                     Row(
                       children: [
                         Container(
                           padding: const EdgeInsets.all(10),
                           decoration: BoxDecoration(color: Colors.orange.shade50, shape: BoxShape.circle),
-                          child: const Icon(Icons.meeting_room, color: Color(0xFFFF7043)),
+                          child: const Icon(Icons.meeting_room, color: kPrimaryColor),
                         ),
                         const SizedBox(width: 15),
                         Column(
@@ -155,18 +168,18 @@ class _HomePageState extends State<HomePage> {
                         ),
                       ],
                     ),
+                    
+                    // Action Buttons
                     Row(
                       children: [
                         IconButton(
-                          icon: const Icon(Icons.copy, color: Color(0xFFFF7043)),
+                          icon: const Icon(Icons.copy, color: kPrimaryColor),
                           onPressed: () => _copyToClipboard(room.id),
                         ),
+                        // Enter Room Button
                         IconButton(
                           icon: const Icon(Icons.arrow_forward_ios, size: 16, color: Colors.grey),
-                          onPressed: () async {
-                             await context.read<RoomViewModel>().joinRoom(room.id);
-                             if (mounted) Navigator.pushNamed(context, '/room');
-                          },
+                          onPressed: () => _handleJoin(room.id),
                         )
                       ],
                     ),

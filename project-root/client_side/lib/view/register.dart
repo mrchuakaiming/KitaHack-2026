@@ -141,7 +141,7 @@ class _RegisterPageState extends State<RegisterPage> {
                       obscureText: true,
                       controller: _passwordController,
                       prefixIcon: const Icon(Icons.lock_outline),
-                      validator: (val) => val!.length < 6 ? 'Min 6 chars' : null,
+                      validator: (val) => val!.length < 8 ? 'Min 8 chars' : null,
                     ),
                     AuthTextField(
                       labelText: "Confirm Password",

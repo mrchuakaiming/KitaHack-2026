@@ -2,7 +2,9 @@
 // Users are able to toggle between login and register page
 
 import 'package:flutter/material.dart';
-import 'common_widgets.dart'; // Uses your new Gradient Button & Header
+import 'package:provider/provider.dart';
+import 'common_widgets.dart'; // Same folder
+import '../viewmodels/login_vm.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -12,9 +14,8 @@ class LoginPage extends StatefulWidget {
 }
 
 class _LoginPageState extends State<LoginPage> {
-  final _formKey = GlobalKey<FormState>();
-  final TextEditingController _emailController = TextEditingController();
-  final TextEditingController _passwordController = TextEditingController();
+  final _emailController = TextEditingController();
+  final _passwordController = TextEditingController();
 
   @override
   void dispose() {
@@ -23,90 +24,97 @@ class _LoginPageState extends State<LoginPage> {
     super.dispose();
   }
 
-  void _handleLogin() {
-    if (_formKey.currentState!.validate()) {
-      // Simulate login success
-      Navigator.pushReplacementNamed(context, '/home');
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
+    // Watch the VM to update UI when loading/error changes
+    final viewModel = context.watch<LoginViewModel>();
+
     return Scaffold(
-      // Background color is handled by main.dart theme (Soft Grey)
-      body: Center(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(25),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              // We put the Header OUTSIDE the box for a modern "Page Title" feel
-              const AuthHeader(
-                title: "Welcome Back",
-                subtitle: "Hungry? Let's get you signed in.",
-              ),
-              
-              AuthBox(
-                child: Form(
-                  key: _formKey,
+      body: Padding(
+        padding: const EdgeInsets.all(25.0),
+        child: Center(
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                // Header
+                const Icon(Icons.restaurant_menu, size: 80, color: Color(0xFFFF7043)),
+                const SizedBox(height: 20),
+                const Text("What2Eat", style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold)),
+                const Text("Decide your next meal together.", style: TextStyle(fontSize: 16, color: Colors.grey)),
+                
+                const SizedBox(height: 40),
+
+                // Form
+                AuthBox(
                   child: Column(
                     children: [
                       AuthTextField(
-                        labelText: "Email",
-                        obscureText: false,
+                        labelText: "Email", 
+                        obscureText: false, 
                         controller: _emailController,
                         prefixIcon: const Icon(Icons.email_outlined),
-                        validator: (value) {
-                          if (value == null || value.isEmpty) return 'Please enter email';
-                          if (!value.contains('@')) return 'Invalid email';
-                          return null;
-                        },
                       ),
-                      
                       AuthTextField(
-                        labelText: "Password",
-                        obscureText: true,
+                        labelText: "Password", 
+                        obscureText: true, 
                         controller: _passwordController,
                         prefixIcon: const Icon(Icons.lock_outline),
-                        validator: (value) {
-                          if (value == null || value.isEmpty) return 'Please enter password';
-                          return null;
-                        },
                       ),
                       
                       const SizedBox(height: 10),
 
+                      // Forgot Password Link
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: TextButton(
+                          onPressed: () => Navigator.pushNamed(context, '/forgot_password'),
+                          child: const Text("Forgot Password?", style: TextStyle(color: Colors.grey)),
+                        ),
+                      ),
+
+                      // Error Message Display
+                      if (viewModel.errorMessage != null)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 10),
+                          child: Text(viewModel.errorMessage!, style: const TextStyle(color: Colors.red)),
+                        ),
+
+                      // Login Button
                       AuthButton(
-                        text: "Login",
-                        onPressed: _handleLogin,
+                        text: viewModel.isLoading ? "Logging in..." : "Log In",
+                        onPressed: () async {
+                          // 1. Call VM
+                          bool success = await viewModel.logIn(
+                            _emailController.text, 
+                            _passwordController.text
+                          );
+                          
+                          // 2. Navigate on Success
+                          if (success && mounted) {
+                            Navigator.pushReplacementNamed(context, '/home');
+                          }
+                        },
                       ),
                     ],
                   ),
                 ),
-              ),
-              
-              const SizedBox(height: 20),
-              
-              // Register Link
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Text("Don't have an account? ", style: TextStyle(color: Colors.grey.shade600)),
-                  GestureDetector(
-                    onTap: () {
-                      Navigator.pushNamed(context, '/register');
-                    },
-                    child: const Text(
-                      "Sign Up",
-                      style: TextStyle(
-                        color: kPrimaryColor, // Uses the orange from common_widgets
-                        fontWeight: FontWeight.bold,
-                      ),
+
+                const SizedBox(height: 20),
+
+                // Register Link
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Text("New here? ", style: TextStyle(color: Colors.grey)),
+                    GestureDetector(
+                      onTap: () => Navigator.pushNamed(context, '/register'),
+                      child: const Text("Create Account", style: TextStyle(color: Color(0xFFFF7043), fontWeight: FontWeight.bold)),
                     ),
-                  ),
-                ],
-              ),
-            ],
+                  ],
+                ),
+              ],
+            ),
           ),
         ),
       ),

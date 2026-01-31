@@ -7,56 +7,88 @@ class RoomSummary {
 }
 
 class HomeViewModel extends ChangeNotifier {
-  // Dummy Data
+  // --- STATE ---
   final List<RoomSummary> _hostedRooms = [
     RoomSummary("X92-B41"),
     RoomSummary("A7X-92B"),
   ];
   
+  bool _isLoading = false;
   String? _joinError;
 
+  // --- GETTERS ---
   List<RoomSummary> get hostedRooms => List.unmodifiable(_hostedRooms);
+  bool get isLoading => _isLoading;
   String? get joinError => _joinError;
 
-  // --- 1. CREATE ROOM (With Limit Validation) ---
-  // Returns null if success, or an error message string if failed.
-  String? createNewRoom() {
+  // --- FUNCTIONS ---
+
+  /// 1. Create a New Room
+  Future<String?> newRoom() async {
     if (_hostedRooms.length >= 5) {
       return "You can only host 5 rooms at a time.";
     }
 
-    // Generate Random ID
+    _setLoading(true);
+
+    // TODO: Call RoomService.createRoom()
+    // TODO: Get the real ID from database
+    await Future.delayed(const Duration(milliseconds: 500));
+    
+    // SIMULATION
     const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
     final rnd = Random();
     String newId = String.fromCharCodes(Iterable.generate(
       6, (_) => chars.codeUnitAt(rnd.nextInt(chars.length))));
 
     _hostedRooms.insert(0, RoomSummary(newId));
-    notifyListeners();
+    
+    _setLoading(false);
     return null; // Success
   }
 
-  // --- 2. JOIN VALIDATION (Must be Existing) ---
-  bool validateCode(String code) {
+  /// 2. Join an Existing Room
+  /// Returns true if join is successful, false if failed.
+  Future<bool> joinRoom(String code) async {
+    _joinError = null; // Reset error
+    
     if (code.isEmpty) {
       _joinError = "Please enter a room code";
       notifyListeners();
       return false;
     }
 
-    // SIMULATION: Check if ID exists.
-    // In a real app, this would be an API call. 
-    // Here, we check if it matches one of OUR rooms, or a specific "Demo" room.
+    _setLoading(true);
+
+    // TODO: Call RoomService.checkRoomExists(code)
+    // TODO: Call RoomService.addParticipant(code, userId)
+    // TODO: If room is locked/full, return false and set _joinError
+    await Future.delayed(const Duration(seconds: 1));
+
+    // SIMULATION: Check if ID exists in our local list or is "DEMO"
     bool exists = _hostedRooms.any((r) => r.id == code) || code == "DEMO-123";
 
     if (!exists) {
       _joinError = "Room ID not found.";
-      notifyListeners();
+      _setLoading(false);
       return false;
     }
 
-    _joinError = null;
+    _setLoading(false);
+    return true; // Success: The View should now navigate to /room
+  }
+
+  /// 3. Fetch User's History
+  Future<void> fetchRooms() async {
+    _setLoading(true);
+    // TODO: Call RoomService.getRoomsForUser()
+    await Future.delayed(const Duration(seconds: 1));
+    _setLoading(false);
+  }
+
+  // --- HELPER ---
+  void _setLoading(bool value) {
+    _isLoading = value;
     notifyListeners();
-    return true;
   }
 }

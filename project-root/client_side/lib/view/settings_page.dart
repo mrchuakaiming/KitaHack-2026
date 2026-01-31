@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
-import 'common_widgets.dart'; // Uses your Premium Widgets
+import 'package:provider/provider.dart';
+import 'common_widgets.dart'; // Ensure this matches your file structure
 import 'bottom_nav.dart';
+import '../viewmodels/settings_page_vm.dart';
 
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
@@ -10,317 +12,187 @@ class SettingsPage extends StatefulWidget {
 }
 
 class _SettingsPageState extends State<SettingsPage> {
-  // --- Controllers ---
-  final TextEditingController _usernameController = TextEditingController(text: "FoodieUser123");
-  final TextEditingController _emailController = TextEditingController(text: "user@example.com"); 
-  final FocusNode _usernameFocusNode = FocusNode();
-
-  final List<TextEditingController> _cuisineControllers = [];
-  final List<TextEditingController> _dietaryControllers = [];
-
-  bool _isEditingUsername = false;
+  // UI Controllers
+  final _usernameController = TextEditingController();
+  final _emailController = TextEditingController();
 
   @override
   void initState() {
     super.initState();
-    _addItem(_cuisineControllers, "Japanese");
-    _addItem(_cuisineControllers, "Italian");
-    _addItem(_dietaryControllers, "No Nuts");
+    // Load initial profile data
+    final vm = context.read<SettingsViewModel>();
+    vm.loadProfile().then((_) {
+      _usernameController.text = vm.username;
+      _emailController.text = vm.email;
+    });
   }
 
   @override
   void dispose() {
     _usernameController.dispose();
     _emailController.dispose();
-    _usernameFocusNode.dispose();
-    for (var c in _cuisineControllers) {
-      c.dispose();
-    }
-    for (var c in _dietaryControllers) {
-      c.dispose();
-    }
     super.dispose();
   }
 
-  void _addItem(List<TextEditingController> list, [String? text]) {
-    setState(() {
-      list.add(TextEditingController(text: text ?? ""));
-    });
-  }
-
-  void _removeItem(List<TextEditingController> list, int index) {
-    setState(() {
-      list[index].dispose();
-      list.removeAt(index);
-    });
-  }
-
-  // --- Delete Account Logic (Preserved) ---
-  void _handleDeleteAccount() {
-    showDialog(
+  // --- CONFIRMATION DIALOG HELPER ---
+  Future<bool> _showConfirmation(String title, String content, {bool isDangerous = false}) async {
+    return await showDialog<bool>(
       context: context,
-      builder: (BuildContext context) {
-        return AlertDialog(
-          title: const Text("Delete Account?"),
-          content: const Text(
-            "Are you sure? This action cannot be undone.",
-            style: TextStyle(color: Colors.black87),
+      builder: (ctx) => AlertDialog(
+        title: Text(title, style: TextStyle(color: isDangerous ? Colors.red : Colors.black)),
+        content: Text(content),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text("Cancel", style: TextStyle(color: Colors.grey)),
           ),
-          actions: [
-            TextButton(
-              child: const Text("Cancel", style: TextStyle(color: Colors.grey)),
-              onPressed: () => Navigator.of(context).pop(),
-            ),
-            TextButton(
-              child: const Text("Delete", style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
-              onPressed: () {
-                Navigator.of(context).pop(); 
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Account deleted.'), backgroundColor: Colors.red),
-                );
-                Navigator.of(context).pushNamedAndRemoveUntil('/login', (Route<dynamic> route) => false);
-              },
-            ),
-          ],
-        );
-      },
-    );
-  }
-
-  // Helper for Section Headers (Reused from Register Page design)
-  Widget _buildSectionHeader(String title, VoidCallback onAdd) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 10, top: 10),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(
-            title,
-            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.black87),
-          ),
-          IconButton(
-            icon: const Icon(Icons.add_circle, color: kPrimaryColor),
-            onPressed: onAdd,
-            tooltip: "Add Item",
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text("Confirm", style: TextStyle(fontWeight: FontWeight.bold, color: isDangerous ? Colors.red : kPrimaryColor)),
           ),
         ],
       ),
-    );
+    ) ?? false;
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      // Main.dart handles background color
-      appBar: AppBar(
-        title: const Text("Settings", style: TextStyle(color: Colors.black87, fontWeight: FontWeight.bold)),
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        automaticallyImplyLeading: false,
-        actions: [
-          // Quick Logout Icon
-          IconButton(
-            icon: const Icon(Icons.logout, color: Colors.redAccent),
-            onPressed: () {
-               Navigator.of(context).pushNamedAndRemoveUntil('/login', (Route<dynamic> route) => false);
-            },
-          )
-        ],
-      ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
-        child: Column(
-          children: [
-            // --- 1. Profile Avatar Section ---
-            const SizedBox(height: 10),
-            Center(
-              child: Stack(
-                children: [
-                  Container(
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      boxShadow: [
-                        BoxShadow(color: Colors.black.withOpacity(0.1), blurRadius: 10, offset: const Offset(0, 5))
-                      ],
-                    ),
-                    child: const CircleAvatar(
-                      radius: 50,
-                      backgroundColor: Colors.white,
-                      backgroundImage: AssetImage('assets/placeholder_user.png'), // Or remove backgroundImage if no asset
-                      child: Icon(Icons.person, size: 50, color: Colors.grey),
-                    ),
-                  ),
-                  Positioned(
-                    bottom: 0,
-                    right: 0,
-                    child: Container(
-                      padding: const EdgeInsets.all(4),
-                      decoration: const BoxDecoration(color: kPrimaryColor, shape: BoxShape.circle),
-                      child: const Icon(Icons.camera_alt, color: Colors.white, size: 20),
-                    ),
-                  )
-                ],
-              ),
-            ),
-            const SizedBox(height: 25),
+    final vm = context.watch<SettingsViewModel>();
 
-            // --- 2. Identity Card ---
-            AuthBox(
+    return Scaffold(
+      appBar: AppBar(title: const Text("Settings"), automaticallyImplyLeading: false),
+      body: vm.isLoading
+          ? const Center(child: CircularProgressIndicator(color: kPrimaryColor))
+          : SingleChildScrollView(
+              padding: const EdgeInsets.all(20),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text("Identity", style: TextStyle(fontSize: 14, color: Colors.grey, fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 15),
-                  
-                  // Username
-                  AuthTextField(
-                    labelText: "Username",
-                    obscureText: false,
-                    controller: _usernameController,
-                    focusNode: _usernameFocusNode,
-                    readOnly: !_isEditingUsername, // Toggle logic
-                    prefixIcon: const Icon(Icons.person_outline),
-                    suffixIcon: IconButton(
-                      icon: Icon(_isEditingUsername ? Icons.check_circle : Icons.edit, 
-                        color: _isEditingUsername ? Colors.green : Colors.grey),
-                      onPressed: () {
-                        setState(() {
-                          _isEditingUsername = !_isEditingUsername;
-                        });
-                        if (_isEditingUsername) {
-                          _usernameFocusNode.requestFocus();
+                  // --- 1. PROFILE SECTION ---
+                  const Text("Profile", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 10),
+                  AuthBox(
+                    child: Column(
+                      children: [
+                        AuthTextField(
+                          labelText: "Username",
+                          obscureText: false,
+                          controller: _usernameController,
+                          readOnly: !vm.isEditing,
+                          prefixIcon: const Icon(Icons.person),
+                        ),
+                        AuthTextField(
+                          labelText: "Email",
+                          obscureText: false,
+                          controller: _emailController,
+                          readOnly: true, // Email usually cannot be changed easily
+                          prefixIcon: const Icon(Icons.email),
+                        ),
+                        const SizedBox(height: 10),
+                        
+                        // Edit / Save Button
+                        Align(
+                          alignment: Alignment.centerRight,
+                          child: vm.isEditing
+                            ? ElevatedButton.icon(
+                                icon: const Icon(Icons.check, size: 16),
+                                label: const Text("Save Changes"),
+                                style: ElevatedButton.styleFrom(backgroundColor: kPrimaryColor, foregroundColor: Colors.white),
+                                onPressed: () async {
+                                  await vm.updateProfile(_usernameController.text);
+                                  if (mounted) {
+                                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Profile Updated")));
+                                  }
+                                },
+                              )
+                            : TextButton.icon(
+                                icon: const Icon(Icons.edit, size: 16, color: kPrimaryColor),
+                                label: const Text("Edit Profile", style: TextStyle(color: kPrimaryColor)),
+                                onPressed: () => vm.toggleEdit(),
+                              ),
+                        )
+                      ],
+                    ),
+                  ),
+
+                  const SizedBox(height: 30),
+
+                  // --- 2. ACCOUNT ACTIONS ---
+                  const Text("Account", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 10),
+                  Container(
+                    decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), boxShadow: [BoxShadow(color: Colors.grey.shade200, blurRadius: 5)]),
+                    child: Column(
+                      children: [
+                        // Change Password (Navigates to ChangePasswordPage)
+                        ListTile(
+                          leading: const Icon(Icons.lock_reset, color: Colors.blue),
+                          title: const Text("Change Password"),
+                          subtitle: const Text("Update your login credentials"),
+                          onTap: () {
+                            Navigator.pushNamed(context, '/change_password');
+                          },
+                        ),
+                        const Divider(height: 1),
+                        
+                        // Clear History
+                        ListTile(
+                          leading: const Icon(Icons.cleaning_services, color: Colors.orange),
+                          title: const Text("Clear History"),
+                          subtitle: const Text("Remove all past room data"),
+                          onTap: () async {
+                            bool confirm = await _showConfirmation("Clear History?", "This will remove all your hosted rooms and preferences.");
+                            if (confirm) {
+                              await vm.clearData();
+                              if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("History Cleared")));
+                            }
+                          },
+                        ),
+                        const Divider(height: 1),
+
+                        // Logout
+                        ListTile(
+                          leading: const Icon(Icons.exit_to_app, color: Colors.black),
+                          title: const Text("Log Out"),
+                          onTap: () => vm.logout(context),
+                        ),
+                      ],
+                    ),
+                  ),
+
+                  const SizedBox(height: 30),
+
+                  // --- 3. DANGER ZONE ---
+                  const Text("Danger Zone", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.red)),
+                  const SizedBox(height: 10),
+                  Container(
+                    decoration: BoxDecoration(color: Colors.red.shade50, borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.red.shade100)),
+                    child: ListTile(
+                      leading: const Icon(Icons.delete_forever, color: Colors.red),
+                      title: const Text("Delete Account", style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
+                      subtitle: const Text("Permanently remove all data"),
+                      onTap: () async {
+                        bool confirm = await _showConfirmation(
+                          "Delete Account?", 
+                          "This action is irreversible. All your data will be lost forever.", 
+                          isDangerous: true
+                        );
+                        
+                        if (confirm) {
+                          bool success = await vm.rmAccount();
+                          if (success && mounted) {
+                            Navigator.pushNamedAndRemoveUntil(context, '/login', (route) => false);
+                          }
                         }
                       },
                     ),
                   ),
-
-                  // Email
-                  AuthTextField(
-                    labelText: "Email",
-                    obscureText: false,
-                    controller: _emailController,
-                    readOnly: true, // Always locked
-                    prefixIcon: const Icon(Icons.email_outlined),
-                    suffixIcon: const Icon(Icons.lock, size: 18, color: Colors.grey), // Visual cue it's locked
-                  ),
-                ],
-              ),
-            ),
-
-            const SizedBox(height: 20),
-
-            // --- 3. Taste Profile Card ---
-            AuthBox(
-              child: Column(
-                children: [
-                  // Cuisines Header
-                  _buildSectionHeader("My Cuisines", () => _addItem(_cuisineControllers)),
                   
-                  if (_cuisineControllers.isEmpty) 
-                    const Padding(
-                      padding: EdgeInsets.all(8.0),
-                      child: Text("No cuisines added yet.", style: TextStyle(color: Colors.grey)),
-                    ),
-                    
-                  ..._cuisineControllers.asMap().entries.map((entry) {
-                    return Row(
-                      children: [
-                        Expanded(
-                          child: AuthTextField(
-                            labelText: "Cuisine",
-                            obscureText: false,
-                            controller: entry.value,
-                            prefixIcon: const Icon(Icons.restaurant, size: 18),
-                          ),
-                        ),
-                        IconButton(
-                          icon: const Icon(Icons.remove_circle_outline, color: Colors.red),
-                          onPressed: () => _removeItem(_cuisineControllers, entry.key),
-                        ),
-                      ],
-                    );
-                  }),
-
-                  const Divider(height: 30),
-
-                  // Dietary Header
-                  _buildSectionHeader("Dietary Restrictions", () => _addItem(_dietaryControllers)),
-
-                  if (_dietaryControllers.isEmpty) 
-                    const Padding(
-                      padding: EdgeInsets.all(8.0),
-                      child: Text("No restrictions.", style: TextStyle(color: Colors.grey)),
-                    ),
-
-                  ..._dietaryControllers.asMap().entries.map((entry) {
-                    return Row(
-                      children: [
-                        Expanded(
-                          child: AuthTextField(
-                            labelText: "Restriction",
-                            obscureText: false,
-                            controller: entry.value,
-                            prefixIcon: const Icon(Icons.warning_amber_rounded, size: 18),
-                          ),
-                        ),
-                        IconButton(
-                          icon: const Icon(Icons.remove_circle_outline, color: Colors.red),
-                          onPressed: () => _removeItem(_dietaryControllers, entry.key),
-                        ),
-                      ],
-                    );
-                  }),
+                  const SizedBox(height: 20),
                 ],
               ),
             ),
-
-            const SizedBox(height: 30),
-
-            // --- 4. Actions ---
-            
-            // Change Password (Secondary Action)
-            SizedBox(
-              width: double.infinity,
-              height: 55,
-              child: OutlinedButton(
-                onPressed: () => Navigator.pushNamed(context, '/change_password'),
-                style: OutlinedButton.styleFrom(
-                  side: BorderSide(color: Colors.grey.shade400),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                ),
-                child: const Text("Change Password", style: TextStyle(color: Colors.black87, fontSize: 16)),
-              ),
-            ),
-            
-            const SizedBox(height: 15),
-
-            // Save Changes (Primary Action)
-            AuthButton(
-              text: "Save Changes",
-              onPressed: () {
-                setState(() => _isEditingUsername = false);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Settings Saved!'), backgroundColor: Colors.green),
-                );
-              },
-            ),
-
-            const SizedBox(height: 30),
-
-            // Delete Account (Danger Zone)
-            TextButton(
-              onPressed: _handleDeleteAccount,
-              child: const Text(
-                "Delete Account",
-                style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold, fontSize: 14),
-              ),
-            ),
-            
-            const SizedBox(height: 20),
-          ],
-        ),
-      ),
-      bottomNavigationBar: const CustomBottomNav(currentIndex: 2),
+      bottomNavigationBar: const CustomBottomNav(currentIndex: 2), // Highlight Profile Tab
     );
   }
 }

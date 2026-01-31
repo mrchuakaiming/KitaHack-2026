@@ -12,6 +12,15 @@ class RoomPage extends StatefulWidget {
 }
 
 class _RoomPageState extends State<RoomPage> {
+
+  @override
+  void initState() {
+    super.initState();
+    // Start polling/checking for results when page loads
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      context.read<RoomViewModel>().wantResult();
+    });
+  }
   
   // --- 1. The Main "Type Selection" Dialog ---
   void _showAddDialog(BuildContext context, RoomViewModel vm) async {
@@ -216,7 +225,30 @@ class _RoomPageState extends State<RoomPage> {
         padding: const EdgeInsets.all(20),
         child: Column(
           children: [
-            // Room Info (ID Only)
+            // 1. RESULT SECTION (If Decision Made)
+            if (vm.recommendation != null) ...[
+               Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                  color: Colors.green.shade50,
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: Colors.green),
+                ),
+                child: Column(
+                  children: [
+                    const Icon(Icons.emoji_events, size: 50, color: Colors.green),
+                    const SizedBox(height: 10),
+                    const Text("It's Decided!", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: Colors.green)),
+                    const SizedBox(height: 5),
+                    Text(vm.recommendation!, style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
+                  ],
+                ),
+               ),
+               const SizedBox(height: 20),
+            ],
+
+            // 2. ROOM ID DISPLAY
             AuthBox(
               child: Column(
                 children: [
@@ -249,7 +281,7 @@ class _RoomPageState extends State<RoomPage> {
             ),
             const SizedBox(height: 20),
 
-            // Budget
+            // 3. BUDGET
             AuthBox(
               child: Column(
                 children: [
@@ -266,7 +298,7 @@ class _RoomPageState extends State<RoomPage> {
             ),
             const SizedBox(height: 20),
 
-            // Preferences List
+            // 4. PREFERENCES LIST
             AuthBox(
               child: Column(
                 children: [
@@ -274,6 +306,7 @@ class _RoomPageState extends State<RoomPage> {
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
                       const Text("Preferences", style: TextStyle(fontWeight: FontWeight.bold)),
+                      // Only allow adding if NOT locked
                       if (!vm.isLocked)
                         IconButton(
                           icon: const Icon(Icons.add_circle, color: kPrimaryColor, size: 30),
@@ -305,16 +338,34 @@ class _RoomPageState extends State<RoomPage> {
             ),
             const SizedBox(height: 30),
 
-            // Lock Button
-            AuthButton(
-              text: vm.isLocked ? "Waiting for others..." : "I'm Done",
-              onPressed: vm.isLocked ? () {} : () => vm.lockSelection(),
-            ),
+            // 5. ACTION BUTTON (Dynamic based on Role)
+            if (vm.isHost && vm.recommendation == null)
+              // HOST VIEW: Button to Generate Result
+              AuthButton(
+                text: vm.isLoading ? "Deciding..." : "Generate Recommendation",
+                onPressed: () => vm.generateRecommendation(),
+              )
+            else if (vm.recommendation != null)
+              // RESULT VIEW: Button to Leave/Reset
+               AuthButton(
+                text: "Leave Room",
+                onPressed: () async {
+                  await vm.leaveRoom();
+                  if (context.mounted) Navigator.pushReplacementNamed(context, '/home');
+                },
+              )
+            else
+              // PARTICIPANT VIEW: "I'm Done" or "Waiting"
+              AuthButton(
+                text: vm.isLocked ? "Waiting for Host..." : "I'm Done",
+                // Disable button if already locked
+                onPressed: vm.isLocked ? () {} : () => vm.lockSelection(),
+              ),
           ],
         ),
       ),
       bottomNavigationBar: BottomNavigationBar(
-        currentIndex: 1, // Highlight 'Home' effectively since we are in a session
+        currentIndex: 1, 
         onTap: _handleBottomNavTap, 
         selectedItemColor: kPrimaryColor,
         unselectedItemColor: Colors.grey,
