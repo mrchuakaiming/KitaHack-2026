@@ -37,6 +37,8 @@ class UserModel {
   final List<String> preferredCuisine;
 
   /// IDs of rooms hosted by this user
+  /// NOTE: This data is NOT stored in Firestore and is injected separately,
+  /// similar to how `uid` is supplied outside of Firestore JSON.
   final List<String> hostedRooms;
 
   /// Main constructor
@@ -56,7 +58,15 @@ class UserModel {
 
   /// Create a UserModel from Firestore JSON data
   /// Equivalent to Python: User(**dict)
-  factory UserModel.fromJson(Map<String, dynamic> json, String uid) {
+  ///
+  /// NOTE:
+  /// - `uid` is supplied externally (Firestore document ID)
+  /// - `hostedRooms` is supplied externally (derived data)
+  factory UserModel.fromJson(
+    Map<String, dynamic> json,
+    String uid, {
+    List<String> hostedRooms = const [],
+  }) {
     return UserModel(
       uid: uid,
       username: json['username'] ?? '',
@@ -65,20 +75,20 @@ class UserModel {
           List<String>.from(json['dietary_restrictions'] ?? []),
       preferredCuisine:
           List<String>.from(json['preferred_cuisine'] ?? []),
-      hostedRooms:
-          List<String>.from(json['hosted_rooms'] ?? []),
+      hostedRooms: hostedRooms,
     );
   }
 
   /// Convert UserModel into JSON for Firestore
   /// Equivalent to Python: dataclass -> dict
+  ///
+  /// NOTE: `uid` and `hostedRooms` are intentionally omitted.
   Map<String, dynamic> toJson() {
     return {
       'username': username,
       'email': email,
       'dietary_restrictions': dietaryRestrictions,
       'preferred_cuisine': preferredCuisine,
-      'hosted_rooms': hostedRooms,
     };
   }
 
