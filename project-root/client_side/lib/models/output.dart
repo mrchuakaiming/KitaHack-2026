@@ -1,4 +1,4 @@
-/// AIResultModel
+/// AIResultModel （not used anymore, only in ai_service.dart）)
 ///
 /// Represents the result of AI analysis for a room in the web app.
 /// 

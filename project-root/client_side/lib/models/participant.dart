@@ -1,60 +1,113 @@
-/// RoomParticipants
-/// 
-/// Represents the list of participants in a room for the web app.
-/// Each participant contains their email, username, live preferences for the room,
-/// and budget for the session. Preferences are structured as a list of maps:
-/// {"cuisine": "<type>", "restaurants": ["<place_id1>", "<place_id2>", ...]}.
-/// 
-/// This class is used on the client-side to:
-/// 1. Store the current state of participants in a room.
-/// 2. Serialize to JSON when sending updates to the backend.
-/// 3. Deserialize from JSON received from the backend.
+/// ParticipantModel
 ///
-/// Example usage:
-/// ```dart
-/// final room = RoomParticipants(
-///   roomId: "ABC123",
-///   participants: [
-///     {
-///       "email": "alice@example.com",
-///       "username": "Alice",
-///       "preferences": [
-///         {"cuisine": "Italian", "restaurants": ["place1", "place2"]},
-///       ],
-///       "budget": "medium"
-///     }
-///   ],
-/// );
-/// final jsonData = room.toJson(); // send to backend
-/// final roomFromBackend = RoomParticipants.fromJson(responseJson);
-/// ```
-class RoomParticipants {
-  final String roomId;                     // Room this participant list belongs to
-  final List<Map<String, dynamic>> participants; 
-  // Each participant map contains:
-  // {
-  //   "email": "...",
-  //   "username": "...",
-  //   "preferences": [{"cuisine": "...", "restaurants": ["place_id1"]}, ...],
-  //   "budget": "medium"
-  // }
+/// Represents a user's participation in a room.
+///
+/// Responsibilities:
+/// - Store per-room user data (uid + roomId as composite key)
+/// - Hold live preferences (submitted for this room, ≤ 3)
+/// - Hold default preferences (from user profile, cuisine only, unlimited)
+/// - Store budget range as a tuple (min, max)
+/// - Store dietary restrictions
+/// - Support Firestore serialization / deserialization
+///
+/// Important:
+/// - ONLY `livePreferences`, `budget`, and `dietaryRestrictions`
+///   are sent for AI analysis
+/// - `defaultPreferences` are used ONLY for UI pre-selection
+class ParticipantModel {
+  /// Firebase user ID
+  final String uid;
 
-  RoomParticipants({
+  /// Room ID
+  final String roomId;
+
+  /// Live preferences for this room (max 3)
+  ///
+  /// Each item:
+  /// {
+  ///   "cuisine": "<string>",
+  ///   "placeId": "<google_place_id>"
+  /// }
+  final List<Map<String, String>> livePreferences;
+
+  /// Default preferences from user profile (cuisine only)
+  final List<String> defaultPreferences;
+
+  /// Budget range as tuple (min, max)
+  ///
+  /// Example: (min: 10, max: 40)
+  final (int min, int max) budget;
+
+  /// Dietary restrictions
+  /// Example: ["halal", "vegetarian"]
+  final List<String> dietaryRestrictions;
+
+  ParticipantModel({
+    required this.uid,
     required this.roomId,
-    required this.participants,
-  });
+    List<Map<String, String>>? livePreferences,
+    List<String>? defaultPreferences,
+    required (int min, int max) budget,
+    List<String>? dietaryRestrictions,
+  })  : livePreferences =
+            (livePreferences != null && livePreferences.length <= 3)
+                ? livePreferences
+                : [],
+        defaultPreferences = defaultPreferences ?? [],
+        dietaryRestrictions = dietaryRestrictions ?? [],
+        budget = budget;
 
-  /// Convert Dart object → JSON
+  /// Convert ParticipantModel → Firestore JSON
   Map<String, dynamic> toJson() => {
-        "room_id": roomId,
-        "participants": participants,
+        "uid": uid,
+        "roomId": roomId,
+        "livePreferences": livePreferences,
+        "defaultPreferences": defaultPreferences,
+        "budget": {
+          "min": budget.min,
+          "max": budget.max,
+        },
+        "dietaryRestrictions": dietaryRestrictions,
       };
 
-  /// Create from server side JSON
-  factory RoomParticipants.fromJson(Map<String, dynamic> json) {
-    return RoomParticipants(
-      roomId: json["room_id"],
-      participants: List<Map<String, dynamic>>.from(json["participants"] ?? []), //Default to empty list if sends nothing
+  /// Create ParticipantModel from Firestore JSON
+  factory ParticipantModel.fromJson(Map<String, dynamic> json) {
+    final budgetJson = json["budget"] ?? {};
+
+    return ParticipantModel(
+      uid: json["uid"],
+      roomId: json["roomId"],
+      livePreferences: (json["livePreferences"] as List<dynamic>?)
+              ?.map((e) => Map<String, String>.from(e))
+              .toList() ??
+          [],
+      defaultPreferences: (json["defaultPreferences"] as List<dynamic>?)
+              ?.map((e) => e.toString())
+              .toList() ??
+          [],
+      budget: (
+        min: budgetJson["min"] ?? 0,
+        max: budgetJson["max"] ?? 0,
+      ),
+      dietaryRestrictions: (json["dietaryRestrictions"] as List<dynamic>?)
+              ?.map((e) => e.toString())
+              .toList() ??
+          [],
     );
+  }
+
+  /// Add a live preference (≤ 3)
+  void addLivePreference(String cuisine, String placeId) {
+    if (livePreferences.length >= 3) return;
+
+    livePreferences.add({
+      "cuisine": cuisine,
+      "placeId": placeId,
+    });
+  }
+
+  /// Clear live preferences (e.g. when leaving room UI)
+  void clearLivePreferences() {
+    livePreferences.clear();
   }
 }
