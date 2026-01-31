@@ -1,9 +1,17 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'common_widgets.dart'; // Ensure this matches your file structure
+import 'common_widgets.dart';
 import 'bottom_nav.dart';
 import '../viewmodels/settings_page_vm.dart';
 
+/// The user profile and application settings screen.
+///
+/// This widget serves as the central hub for user account management.
+/// It provides functionality for:
+/// 1. **Profile Editing:** Viewing and updating the username.
+/// 2. **Account Security:** Triggering password resets (via email).
+/// 3. **Data Management:** Clearing local history or permanently deleting the account.
+/// 4. **Session Management:** Logging out of the application.
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
 
@@ -12,10 +20,16 @@ class SettingsPage extends StatefulWidget {
 }
 
 class _SettingsPageState extends State<SettingsPage> {
-  // UI Controllers
+  // --- UI CONTROLLERS ---
+  // TextControllers manage the input fields for the profile section.
   final _usernameController = TextEditingController();
   final _emailController = TextEditingController();
 
+  /// Initializes the state and loads user data.
+  ///
+  /// Calls [SettingsViewModel.loadProfile] to fetch the latest user details
+  /// (like username and email) from the backend/service layer and populates
+  /// the text controllers.
   @override
   void initState() {
     super.initState();
@@ -27,6 +41,7 @@ class _SettingsPageState extends State<SettingsPage> {
     });
   }
 
+  /// Disposes controllers to free up system resources.
   @override
   void dispose() {
     _usernameController.dispose();
@@ -35,6 +50,16 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   // --- CONFIRMATION DIALOG HELPER ---
+
+  /// Displays a generic modal dialog to confirm sensitive actions.
+  ///
+  /// This reusable function is used for actions like "Clear History" or "Delete Account".
+  ///
+  /// * [title]: The headline of the dialog.
+  /// * [content]: The explanatory text warning the user of consequences.
+  /// * [isDangerous]: If true, styles the "Confirm" button in red to indicate risk.
+  ///
+  /// Returns `true` if the user clicked "Confirm", otherwise `false`.
   Future<bool> _showConfirmation(String title, String content, {bool isDangerous = false}) async {
     return await showDialog<bool>(
       context: context,
@@ -42,25 +67,30 @@ class _SettingsPageState extends State<SettingsPage> {
         title: Text(title, style: TextStyle(color: isDangerous ? Colors.red : Colors.black)),
         content: Text(content),
         actions: [
+          // Cancel Button
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
             child: const Text("Cancel", style: TextStyle(color: Colors.grey)),
           ),
+          // Confirm Button (styled based on danger level)
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
             child: Text("Confirm", style: TextStyle(fontWeight: FontWeight.bold, color: isDangerous ? Colors.red : kPrimaryColor)),
           ),
         ],
       ),
-    ) ?? false;
+    ) ?? false; // Default to false if dialog is dismissed by tapping outside
   }
 
   @override
   Widget build(BuildContext context) {
+    // Watch the ViewModel for changes (e.g., loading state, edit mode toggle)
     final vm = context.watch<SettingsViewModel>();
 
     return Scaffold(
       appBar: AppBar(title: const Text("Settings"), automaticallyImplyLeading: false),
+      
+      // Show a loading spinner if the VM is performing an async operation
       body: vm.isLoading
           ? const Center(child: CircularProgressIndicator(color: kPrimaryColor))
           : SingleChildScrollView(
@@ -69,11 +99,13 @@ class _SettingsPageState extends State<SettingsPage> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   // --- 1. PROFILE SECTION ---
+                  // Handles Username and Email display/editing.
                   const Text("Profile", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
                   const SizedBox(height: 10),
                   AuthBox(
                     child: Column(
                       children: [
+                        // Username Field (Editable based on vm.isEditing)
                         AuthTextField(
                           labelText: "Username",
                           obscureText: false,
@@ -81,6 +113,7 @@ class _SettingsPageState extends State<SettingsPage> {
                           readOnly: !vm.isEditing,
                           prefixIcon: const Icon(Icons.person),
                         ),
+                        // Email Field (Always Read-Only)
                         AuthTextField(
                           labelText: "Email",
                           obscureText: false,
@@ -90,7 +123,7 @@ class _SettingsPageState extends State<SettingsPage> {
                         ),
                         const SizedBox(height: 10),
                         
-                        // Edit / Save Button
+                        // Edit / Save Button Toggle
                         Align(
                           alignment: Alignment.centerRight,
                           child: vm.isEditing
@@ -99,6 +132,7 @@ class _SettingsPageState extends State<SettingsPage> {
                                 label: const Text("Save Changes"),
                                 style: ElevatedButton.styleFrom(backgroundColor: kPrimaryColor, foregroundColor: Colors.white),
                                 onPressed: () async {
+                                  // Save changes via VM
                                   await vm.updateProfile(_usernameController.text);
                                   if (mounted) {
                                     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Profile Updated")));
@@ -118,19 +152,21 @@ class _SettingsPageState extends State<SettingsPage> {
                   const SizedBox(height: 30),
 
                   // --- 2. ACCOUNT ACTIONS ---
+                  // General account maintenance (Passwords, History, Logout).
                   const Text("Account", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
                   const SizedBox(height: 10),
                   Container(
                     decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), boxShadow: [BoxShadow(color: Colors.grey.shade200, blurRadius: 5)]),
                     child: Column(
                       children: [
-                        // Change Password (Navigates to ChangePasswordPage)
+                        // Reset Password (Navigates to the Reset Password Flow)
                         ListTile(
                           leading: const Icon(Icons.lock_reset, color: Colors.blue),
-                          title: const Text("Change Password"),
-                          subtitle: const Text("Update your login credentials"),
+                          title: const Text("Reset Password"), 
+                          subtitle: const Text("Send a reset link to your email"),
                           onTap: () {
-                            Navigator.pushNamed(context, '/change_password');
+                            // Navigate to the shared Reset Password screen
+                            Navigator.pushNamed(context, '/reset_password');
                           },
                         ),
                         const Divider(height: 1),
@@ -141,6 +177,7 @@ class _SettingsPageState extends State<SettingsPage> {
                           title: const Text("Clear History"),
                           subtitle: const Text("Remove all past room data"),
                           onTap: () async {
+                            // Require user confirmation before clearing data
                             bool confirm = await _showConfirmation("Clear History?", "This will remove all your hosted rooms and preferences.");
                             if (confirm) {
                               await vm.clearData();
@@ -163,6 +200,7 @@ class _SettingsPageState extends State<SettingsPage> {
                   const SizedBox(height: 30),
 
                   // --- 3. DANGER ZONE ---
+                  // Destructive actions involving permanent data loss.
                   const Text("Danger Zone", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.red)),
                   const SizedBox(height: 10),
                   Container(
@@ -172,6 +210,7 @@ class _SettingsPageState extends State<SettingsPage> {
                       title: const Text("Delete Account", style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
                       subtitle: const Text("Permanently remove all data"),
                       onTap: () async {
+                        // Strict double-confirmation for account deletion
                         bool confirm = await _showConfirmation(
                           "Delete Account?", 
                           "This action is irreversible. All your data will be lost forever.", 
@@ -181,6 +220,7 @@ class _SettingsPageState extends State<SettingsPage> {
                         if (confirm) {
                           bool success = await vm.rmAccount();
                           if (success && mounted) {
+                            // Redirect to login screen on success
                             Navigator.pushNamedAndRemoveUntil(context, '/login', (route) => false);
                           }
                         }
@@ -192,7 +232,8 @@ class _SettingsPageState extends State<SettingsPage> {
                 ],
               ),
             ),
-      bottomNavigationBar: const CustomBottomNav(currentIndex: 2), // Highlight Profile Tab
+      // Uses the custom bottom navigation bar, highlighting the "Profile" tab (index 2)
+      bottomNavigationBar: const CustomBottomNav(currentIndex: 2), 
     );
   }
 }

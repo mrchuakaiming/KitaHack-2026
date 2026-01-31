@@ -1,15 +1,48 @@
 import 'package:flutter/material.dart';
 
 // --- PREMIUM DESIGN CONSTANTS ---
-const Color kPrimaryColor = Color(0xFFFF7043); // Sunset Orange
-const Color kSecondaryColor = Color(0xFFFF5722); // Deep Orange (for gradient)
+
+/// The primary brand color (Sunset Orange).
+///
+/// Used for main buttons, active states, and key highlights.
+const Color kPrimaryColor = Color(0xFFFF7043); 
+
+/// The secondary brand color (Deep Orange).
+///
+/// Used in conjunction with [kPrimaryColor] to create rich gradients.
+const Color kSecondaryColor = Color(0xFFFF5722); 
+
+/// The standard background color for screens.
+///
+/// A very light grey (almost white) used to provide contrast against the
+/// pure white containers ([AuthBox]).
 const Color kBackgroundColor = Color(0xFFF5F5F5); 
-const double kRadius = 20.0; // Smoother, larger curves
+
+/// The standard border radius used throughout the app.
+///
+/// Set to 20.0 for a modern, rounded, and friendly aesthetic.
+const double kRadius = 20.0; 
 
 // --- 1. The Header Widget (New!) ---
-// Use this at the top of Login, Register, Create Room, etc.
+
+/// A standardized header widget for authentication and major flow screens.
+///
+/// This widget displays a large, bold title followed by a subtle subtitle.
+/// It is designed to be placed at the very top of screens like Login, Register,
+/// or Create Room to provide context to the user.
+///
+/// Usage:
+/// ```dart
+/// AuthHeader(
+///   title: "Welcome Back",
+///   subtitle: "Sign in to continue",
+/// )
+/// ```
 class AuthHeader extends StatelessWidget {
+  /// The main headline text (e.g., "Sign Up").
   final String title;
+
+  /// The supporting text displayed below the title (e.g., "Join us today").
   final String subtitle;
 
   const AuthHeader({
@@ -48,14 +81,40 @@ class AuthHeader extends StatelessWidget {
 }
 
 // --- 2. The Input Field (Refined) ---
+
+/// A customized text input field with a premium look and feel.
+///
+/// This widget wraps a [TextFormField] in a container with a subtle shadow
+/// and custom border styling. It is designed to "pop" against the 
+/// [kBackgroundColor].
+///
+/// Key Features:
+/// * **Shadow Depth:** Floating effect using `BoxShadow`.
+/// * **Theming:** automatically uses [kPrimaryColor] for the cursor and icons.
+/// * **Validation:** Supports standard [validator] functions.
 class AuthTextField extends StatelessWidget {
+  /// The label text displayed inside the field (e.g., "Email").
   final String labelText;
+
+  /// Whether the text should be hidden (for passwords).
   final bool obscureText;
+
+  /// The controller to manage the text being edited.
   final TextEditingController controller;
+
+  /// An optional function to validate the input. Returns an error string or null.
   final String? Function(String?)? validator;
+
+  /// Focus node for managing focus state manually.
   final FocusNode? focusNode;
+
+  /// Whether the field is read-only (useful for profile views).
   final bool readOnly;
+
+  /// An optional icon to display at the end of the field.
   final Widget? suffixIcon;
+
+  /// An optional icon to display at the start of the field.
   final Widget? prefixIcon;
 
   const AuthTextField({
@@ -129,8 +188,17 @@ class AuthTextField extends StatelessWidget {
 }
 
 // --- 3. The Gradient Button (The Star Show) ---
+
+/// A primary action button with a vibrant gradient background.
+///
+/// This button is used for the main calls to action (e.g., "Log In", "Create Room").
+/// It features a gradient from [kPrimaryColor] to [kSecondaryColor] and a 
+/// drop shadow to make it stand out.
 class AuthButton extends StatelessWidget {
+  /// The text displayed on the button.
   final String text;
+
+  /// The callback function executed when the button is tapped.
   final VoidCallback onPressed;
 
   const AuthButton({
@@ -182,7 +250,14 @@ class AuthButton extends StatelessWidget {
 }
 
 // --- 4. The Card Container ---
+
+/// A generic container styled like a "Card" or "Box".
+///
+/// This widget provides a white background with rounded corners and a shadow.
+/// It is typically used to group form elements (like inputs and buttons) 
+/// together, separating them visually from the background.
 class AuthBox extends StatelessWidget {
+  /// The widget subtree to be displayed inside the box.
   final Widget child;
 
   const AuthBox({super.key, required this.child});

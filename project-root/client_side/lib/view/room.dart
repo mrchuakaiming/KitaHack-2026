@@ -1,9 +1,22 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart'; // For Clipboard
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
-import 'common_widgets.dart'; // Ensure this path is correct
+import 'common_widgets.dart';
 import '../viewmodels/room_vm.dart';
 
+/// The active session screen (Lobby).
+///
+/// This widget represents the "Room" where users (both Hosts and Participants)
+/// collaborate to decide where to eat.
+///
+/// **Key Features:**
+/// * **Real-time updates:** Polls for results and preference changes.
+/// * **Preference Management:** Allows adding/removing cuisines or restaurants.
+/// * **Budget Control:** Shared budget slider.
+/// * **Role-based Actions:**
+///     * **Hosts:** Can trigger the final decision generation.
+///     * **Participants:** Can "Lock in" their choices to signal readiness.
+/// * **Result Display:** Shows the winning option once decided.
 class RoomPage extends StatefulWidget {
   const RoomPage({super.key});
 
@@ -13,6 +26,11 @@ class RoomPage extends StatefulWidget {
 
 class _RoomPageState extends State<RoomPage> {
 
+  /// Initializes the room state.
+  ///
+  /// We use `addPostFrameCallback` to trigger `wantResult()` after the first frame.
+  /// This ensures the context is fully built before interacting with the Provider,
+  /// starting the polling/listening process for the final recommendation.
   @override
   void initState() {
     super.initState();
@@ -23,6 +41,11 @@ class _RoomPageState extends State<RoomPage> {
   }
   
   // --- 1. The Main "Type Selection" Dialog ---
+
+  /// prompts the user to choose between adding a "Restaurant" or a "Cuisine".
+  ///
+  /// This acts as the entry point for adding preferences. Based on the user's
+  /// selection, it routes to either the Map dialog or the Text Input dialog.
   void _showAddDialog(BuildContext context, RoomViewModel vm) async {
     // Step 1: Ask "Restaurant or Cuisine?"
     String? selectionType = await showDialog<String>(
@@ -38,6 +61,7 @@ class _RoomPageState extends State<RoomPage> {
               const SizedBox(height: 20),
               Row(
                 children: [
+                  // Option A: Restaurant (Triggers Map)
                   Expanded(
                     child: _buildBigSelectionButton(
                       icon: Icons.store_rounded,
@@ -48,6 +72,7 @@ class _RoomPageState extends State<RoomPage> {
                     ),
                   ),
                   const SizedBox(width: 15),
+                  // Option B: Cuisine (Triggers Text Input)
                   Expanded(
                     child: _buildBigSelectionButton(
                       icon: Icons.restaurant_menu_rounded,
@@ -75,13 +100,20 @@ class _RoomPageState extends State<RoomPage> {
       finalResult = await _showCuisineInputDialog();
     }
 
-    // Step 3: Add to ViewModel
+    // Step 3: Add the result to the ViewModel
+    // This updates the shared state so other users (conceptually) can see it.
     if (finalResult != null) {
       vm.addPreference(finalResult);
     }
   }
 
   // --- 2. Google Maps Placeholder Dialog ---
+
+  /// Simulates a Google Maps selection interface.
+  ///
+  /// **Note:** This is currently a mock implementation. In a real production app,
+  /// this would integrate `Maps_flutter` or the Google Places API to allow
+  /// the user to search and select a real geolocation.
   Future<String?> _showGoogleMapsDialog() {
     return showDialog<String>(
       context: context,
@@ -109,7 +141,7 @@ class _RoomPageState extends State<RoomPage> {
                       ],
                     ),
                   ),
-                  // Select Button
+                  // Select Button (Hardcoded for Demo)
                   Positioned(
                     bottom: 20, left: 20, right: 20,
                     child: AuthButton(
@@ -129,6 +161,8 @@ class _RoomPageState extends State<RoomPage> {
   }
 
   // --- 3. Cuisine Text Input Dialog ---
+
+  /// A simple dialog allowing the user to type a cuisine name.
   Future<String?> _showCuisineInputDialog() {
     final TextEditingController controller = TextEditingController();
     return showDialog<String>(
@@ -139,7 +173,7 @@ class _RoomPageState extends State<RoomPage> {
           title: const Text("Choose Cuisine", style: TextStyle(fontWeight: FontWeight.bold)),
           content: TextField(
             controller: controller,
-            autofocus: true,
+            autofocus: true, // Keyboards opens immediately
             decoration: InputDecoration(
               hintText: "e.g. Italian, Sushi, Tacos",
               filled: true,
@@ -174,6 +208,8 @@ class _RoomPageState extends State<RoomPage> {
   }
 
   // --- UI Helper for Big Buttons ---
+
+  /// A helper widget to create the large square buttons used in the `_showAddDialog`.
   Widget _buildBigSelectionButton({
     required IconData icon, 
     required String label, 
@@ -216,7 +252,9 @@ class _RoomPageState extends State<RoomPage> {
 
   @override
   Widget build(BuildContext context) {
-    // Access the shared RoomViewModel
+    // Access the shared RoomViewModel. 
+    // Using context.watch ensures the UI rebuilds whenever the room state changes
+    // (e.g., someone adds a preference, budget changes, or result is ready).
     final vm = context.watch<RoomViewModel>();
 
     return Scaffold(
@@ -225,7 +263,9 @@ class _RoomPageState extends State<RoomPage> {
         padding: const EdgeInsets.all(20),
         child: Column(
           children: [
-            // 1. RESULT SECTION (If Decision Made)
+            // --- 1. RESULT SECTION ---
+            // This section only appears when 'vm.recommendation' is not null.
+            // It signifies that the Host has made a decision.
             if (vm.recommendation != null) ...[
                Container(
                 width: double.infinity,
@@ -248,7 +288,8 @@ class _RoomPageState extends State<RoomPage> {
                const SizedBox(height: 20),
             ],
 
-            // 2. ROOM ID DISPLAY
+            // --- 2. ROOM ID DISPLAY ---
+            // Shows the current Room Code so users can share it with friends.
             AuthBox(
               child: Column(
                 children: [
@@ -281,7 +322,8 @@ class _RoomPageState extends State<RoomPage> {
             ),
             const SizedBox(height: 20),
 
-            // 3. BUDGET
+            // --- 3. BUDGET SECTION ---
+            // A slider that allows the group to set a price range.
             AuthBox(
               child: Column(
                 children: [
@@ -291,6 +333,7 @@ class _RoomPageState extends State<RoomPage> {
                     min: 0, max: 100, divisions: 20,
                     activeColor: kPrimaryColor,
                     labels: RangeLabels("\$${vm.budgetRange.start.round()}", "\$${vm.budgetRange.end.round()}"),
+                    // Disable slider if the user has "Locked" their choices
                     onChanged: vm.isLocked ? null : (v) => vm.setBudget(v),
                   ),
                 ],
@@ -298,7 +341,8 @@ class _RoomPageState extends State<RoomPage> {
             ),
             const SizedBox(height: 20),
 
-            // 4. PREFERENCES LIST
+            // --- 4. PREFERENCES LIST ---
+            // Displays all added restaurants/cuisines.
             AuthBox(
               child: Column(
                 children: [
@@ -306,7 +350,7 @@ class _RoomPageState extends State<RoomPage> {
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
                       const Text("Preferences", style: TextStyle(fontWeight: FontWeight.bold)),
-                      // Only allow adding if NOT locked
+                      // Only allow adding new items if NOT locked
                       if (!vm.isLocked)
                         IconButton(
                           icon: const Icon(Icons.add_circle, color: kPrimaryColor, size: 30),
@@ -317,6 +361,7 @@ class _RoomPageState extends State<RoomPage> {
                   if (vm.preferences.isEmpty)
                     const Padding(padding: EdgeInsets.all(10), child: Text("No preferences yet", style: TextStyle(color: Colors.grey))),
                   
+                  // Render list items dynamically
                   ...vm.preferences.map((pref) {
                     final isRestaurant = pref.contains("Restaurant");
                     return ListTile(
@@ -338,15 +383,22 @@ class _RoomPageState extends State<RoomPage> {
             ),
             const SizedBox(height: 30),
 
-            // 5. ACTION BUTTON (Dynamic based on Role)
+            // --- 5. ACTION BUTTON (Dynamic Logic) ---
+            // This button changes function and text based on:
+            // 1. User Role (Host vs Participant)
+            // 2. Session State (Decision Made vs Pending)
+            // 3. Lock State (Locked vs Open)
+            
             if (vm.isHost && vm.recommendation == null)
-              // HOST VIEW: Button to Generate Result
+              // CASE A: HOST VIEW (Before Decision)
+              // The Host has the power to "Generate Recommendation" to end the voting.
               AuthButton(
                 text: vm.isLoading ? "Deciding..." : "Generate Recommendation",
                 onPressed: () => vm.generateRecommendation(),
               )
             else if (vm.recommendation != null)
-              // RESULT VIEW: Button to Leave/Reset
+              // CASE B: RESULT VIEW (After Decision)
+              // Once a result exists, the button allows users to leave.
                AuthButton(
                 text: "Leave Room",
                 onPressed: () async {
@@ -355,10 +407,11 @@ class _RoomPageState extends State<RoomPage> {
                 },
               )
             else
-              // PARTICIPANT VIEW: "I'm Done" or "Waiting"
+              // CASE C: PARTICIPANT VIEW (Pending)
+              // Participants "Lock" their choices to signal they are ready.
               AuthButton(
                 text: vm.isLocked ? "Waiting for Host..." : "I'm Done",
-                // Disable button if already locked
+                // Disable button interaction if already locked
                 onPressed: vm.isLocked ? () {} : () => vm.lockSelection(),
               ),
           ],
