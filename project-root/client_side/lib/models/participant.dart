@@ -1,19 +1,3 @@
-/// ParticipantModel
-///
-/// Represents a user's participation in a room.
-///
-/// Responsibilities:
-/// - Store per-room user data (uid + roomId as composite key)
-/// - Hold live preferences (submitted for this room, ≤ 3)
-/// - Hold default preferences (from user profile, cuisine only, unlimited)
-/// - Store budget range as a tuple (min, max)
-/// - Store dietary restrictions
-/// - Support Firestore serialization / deserialization
-///
-/// Important:
-/// - ONLY `livePreferences`, `budget`, and `dietaryRestrictions`
-///   are sent for AI analysis
-/// - `defaultPreferences` are used ONLY for UI pre-selection
 class ParticipantModel {
   /// Firebase user ID
   final String uid;
@@ -25,10 +9,10 @@ class ParticipantModel {
   ///
   /// Each item:
   /// {
-  ///   "cuisine": "<string>",
-  ///   "placeId": "<google_place_id>"
+  ///   "cuisine": "<string> | null",
+  ///   "placeId": "<google_place_id> | null"
   /// }
-  final List<Map<String, String>> livePreferences;
+  final List<Map<String, dynamic>> livePreferences;
 
   /// Default preferences from user profile (cuisine only)
   final List<String> defaultPreferences;
@@ -45,7 +29,7 @@ class ParticipantModel {
   ParticipantModel({
     required this.uid,
     required this.roomId,
-    List<Map<String, String>>? livePreferences,
+    List<Map<String, dynamic>>? livePreferences,
     List<String>? defaultPreferences,
     required (int min, int max) budget,
     List<String>? dietaryRestrictions,
@@ -57,11 +41,20 @@ class ParticipantModel {
         dietaryRestrictions = dietaryRestrictions ?? [],
         budget = budget;
 
+  /*-----------------------------------------------------
+  * Serialization / Deserialization
+  *----------------------------------------------------*/
+
   /// Convert ParticipantModel → Firestore JSON
   Map<String, dynamic> toJson() => {
         "uid": uid,
         "roomId": roomId,
-        "livePreferences": livePreferences,
+        "livePreferences": livePreferences
+            .map((pref) => {
+                  if (pref["cuisine"] != null) "cuisine": pref["cuisine"],
+                  if (pref["placeId"] != null) "placeId": pref["placeId"],
+                })
+            .toList(),
         "defaultPreferences": defaultPreferences,
         "budget": {
           "min": budget.min,
@@ -78,7 +71,10 @@ class ParticipantModel {
       uid: json["uid"],
       roomId: json["roomId"],
       livePreferences: (json["livePreferences"] as List<dynamic>?)
-              ?.map((e) => Map<String, String>.from(e))
+              ?.map((e) => {
+                    "cuisine": e["cuisine"],
+                    "placeId": e["placeId"],
+                  })
               .toList() ??
           [],
       defaultPreferences: (json["defaultPreferences"] as List<dynamic>?)
@@ -96,9 +92,15 @@ class ParticipantModel {
     );
   }
 
+  /*-----------------------------------------------------
+  * Live Preference Management
+  *----------------------------------------------------*/
+
   /// Add a live preference (≤ 3)
-  void addLivePreference(String cuisine, String placeId) {
+  void addLivePreference(String? cuisine, String? placeId) {
     if (livePreferences.length >= 3) return;
+    if ((cuisine == null || cuisine.isEmpty) &&
+        (placeId == null || placeId.isEmpty)) return;
 
     livePreferences.add({
       "cuisine": cuisine,
@@ -110,4 +112,13 @@ class ParticipantModel {
   void clearLivePreferences() {
     livePreferences.clear();
   }
+
+  /// Get live preferences ready for AI (only entries with both cuisine & placeId)
+  List<Map<String, String>> get aiReadyPreferences => livePreferences
+      .where((p) => p["cuisine"] != null && p["placeId"] != null)
+      .map((p) => {
+            "cuisine": p["cuisine"] as String,
+            "placeId": p["placeId"] as String,
+          })
+      .toList();
 }
