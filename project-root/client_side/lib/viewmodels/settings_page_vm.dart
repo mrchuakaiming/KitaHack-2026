@@ -2,102 +2,82 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../coordinators/coordinator.dart';
 import '../models/user.dart';
-import '../services/firestore_service.dart';
 
-/// The ViewModel for the User Settings / Profile Page.
+/// The ViewModel for the Settings Page.
 ///
-/// This class manages:
-/// 1. **Profile Data:** Fetching and displaying the current [UserModel].
-/// 2. **Edit Mode:** Toggling the UI between "Read-Only" and "Edit".
-/// 3. **Account Actions:** Delegating Clear Data and Delete Account operations to the [Coordinator].
+/// **Scope:**
+/// This ViewModel is strictly limited to **Account Mutations**:
+/// 1.  Updating Profile details.
+/// 2.  Resetting Password.
+/// 3.  Deleting the Account.
+///
+/// It delegates all business logic to the [Coordinator].
 class SettingsViewModel extends ChangeNotifier {
   
   // --- DEPENDENCIES ---
   final Coordinator _coordinator;
-  final FirestoreService _db;
 
   // --- STATE ---
-  
-  /// The current user's profile data.
-  UserModel? _userModel;
-
-  /// Indicates if we are currently fetching data or performing an action.
   bool _isLoading = false;
-
-  /// Controls whether the UI text fields are enabled.
-  bool _isEditing = false;
-
-  /// Stores error messages for UI display.
   String? _errorMessage;
 
   // --- CONSTRUCTOR ---
-  SettingsViewModel({Coordinator? coordinator, FirestoreService? db}) 
-      : _coordinator = coordinator ?? Coordinator(),
-        _db = db ?? FirestoreService();
+  SettingsViewModel({Coordinator? coordinator}) 
+      : _coordinator = coordinator ?? Coordinator();
 
   // --- GETTERS ---
-  UserModel? get userModel => _userModel;
   bool get isLoading => _isLoading;
-  bool get isEditing => _isEditing;
   String? get errorMessage => _errorMessage;
 
-  // --- INITIALIZATION ---
+  // ====================================================================
+  // 1. UPDATE PROFILE
+  // ====================================================================
 
-  /// Loads the current user's profile from Firestore.
-  /// Should be called in `initState`.
-  Future<void> loadProfile() async {
-    _setLoading(true);
-    _errorMessage = null;
-
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) {
-      _errorMessage = "Not logged in.";
-      _setLoading(false);
-      return;
-    }
-
-    try {
-      // Fetch directly from Firestore Service
-      _userModel = await _db.getUser(user.uid);
-    } catch (e) {
-      _errorMessage = "Failed to load profile.";
-    } finally {
-      _setLoading(false);
-    }
-  }
-
-  // --- ACTIONS ---
-
-  /// 1. Update Profile
+  /// Updates the user's mutable profile fields (Username, Cuisines, Dietary).
   ///
-  /// Saves changes to the username, cuisines, or dietary restrictions.
-  /// Delegates to [Coordinator.updateProfile].
+  /// **Logic:**
+  /// 1.  Identifies the current user via `FirebaseAuth`.
+  /// 2.  Constructs a temporary [UserModel] with the new input data.
+  /// 3.  Delegates the update to [Coordinator.updateProfile].
+  ///
+  /// **Parameters:**
+  /// * [username]: The new display name.
+  /// * [cuisines]: The new list of preferred cuisines.
+  /// * [dietary]: The new list of dietary restrictions.
   ///
   /// **Returns:**
-  /// * `true` if successful.
+  /// * `true` if the update was successful.
   Future<bool> updateProfile({
     required String username,
     required List<String> cuisines,
     required List<String> dietary,
   }) async {
-    if (_userModel == null) return false;
     _setLoading(true);
-    _errorMessage = null;
+    _clearError();
+
+    // Get current UID immediately from Auth since we don't maintain local state
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) {
+      _errorMessage = "You must be logged in to update your profile.";
+      _setLoading(false);
+      return false;
+    }
 
     try {
-      // Create an updated model copy
-      final updated = _userModel!.copyWith(
+      // Construct a model wrapper to pass data to the Coordinator.
+      // Note: We populate immutable fields (email/hostedRooms) with 
+      // dummy/current data as Coordinator.updateProfile() ignores them.
+      final updatedModel = UserModel(
+        uid: user.uid,
+        email: user.email ?? '', 
         username: username,
         preferredCuisine: cuisines,
         dietaryRestrictions: dietary,
+        hostedRooms: [], // Ignored by update logic
       );
 
-      // Delegate to Coordinator
-      await _coordinator.updateProfile(updated: updated);
-      
-      // Update local state on success
-      _userModel = updated;
-      _isEditing = false; // Exit edit mode
+      // DELEGATION
+      await _coordinator.updateProfile(updated: updatedModel);
       
       _setLoading(false);
       return true;
@@ -109,77 +89,83 @@ class SettingsViewModel extends ChangeNotifier {
     }
   }
 
-  /// 2. Clear Data (Reset Preferences)
+  // ====================================================================
+  // 2. RESET PASSWORD
+  // ====================================================================
+
+  /// Triggers a password reset email for the currently logged-in user.
   ///
-  /// Clears the user's history and preferences without deleting the account.
-  /// **Logic:** It creates a copy of the user model with empty preference lists
-  /// and calls [updateProfile] to save it.
-  Future<bool> clearData() async {
-    if (_userModel == null) return false;
+  /// **Logic:**
+  /// 1.  Retrieves the email from the current Auth session.
+  /// 2.  Delegates to [Coordinator.resetPassword].
+  Future<void> resetPassword() async {
     _setLoading(true);
+    _clearError();
+
+    final user = FirebaseAuth.instance.currentUser;
+    final email = user?.email;
+
+    if (email == null || email.isEmpty) {
+      _errorMessage = "No email found for this user.";
+      _setLoading(false);
+      return;
+    }
 
     try {
-      // Create a "cleared" model
-      final clearedModel = _userModel!.copyWith(
-        preferredCuisine: [],
-        dietaryRestrictions: [],
-      );
-
-      // Use Coordinator to persist
-      await _coordinator.updateProfile(updated: clearedModel);
-
-      // Update local state
-      _userModel = clearedModel;
-      
-      _setLoading(false);
-      return true;
+      // DELEGATION
+      await _coordinator.resetPassword(email);
+      // Success is silent (no return value expected by UI)
 
     } catch (e) {
-      _errorMessage = "Failed to clear data.";
+      _errorMessage = "Failed to send reset email: ${e.toString()}";
+    } finally {
       _setLoading(false);
-      return false;
     }
   }
 
-  /// 3. Delete Account (Remove Account)
+  // ====================================================================
+  // 3. DELETE ACCOUNT
+  // ====================================================================
+
+  /// Permanently deletes the user's account and data.
   ///
-  /// Permanently deletes Firestore data and the Auth account.
-  /// Delegates to [Coordinator.deleteAccount].
+  /// **Logic:**
+  /// 1.  Delegates the destructive sequence (Firestore delete -> Auth delete)
+  ///     to [Coordinator.deleteAccount].
   ///
   /// **Returns:**
-  /// * `true` if successful (signal View to navigate to Login).
+  /// * `true` if successful (Signal to UI to navigate to Login).
   /// * `false` if failed (e.g., requires recent login).
-  Future<bool> rmAccount() async {
+  Future<bool> deleteAccount() async {
     _setLoading(true);
+    _clearError();
     
     try {
-      // Coordinator handles the sequence: Delete Firestore -> Delete Auth
+      // DELEGATION
       await _coordinator.deleteAccount();
-      
-      // Clear local state
-      _userModel = null;
       
       _setLoading(false);
       return true; 
 
     } catch (e) {
-      _errorMessage = e.toString(); // e.g. "Requires recent login"
+      // Handles specific errors like 'requires-recent-login' passed from Coordinator
+      _errorMessage = e.toString();
       _setLoading(false);
       return false;
     }
   }
 
-  // --- UI HELPERS ---
+  // --- INTERNAL HELPERS ---
 
-  /// Toggles the editing state for the Profile section.
-  void toggleEdit() {
-    _isEditing = !_isEditing;
-    // If cancelling edit, notify listeners to revert UI
-    notifyListeners(); 
-  }
-
+  /// Updates the `isLoading` state and notifies the UI to rebuild.
   void _setLoading(bool value) {
     _isLoading = value;
+    notifyListeners();
+  }
+
+  /// Clears any previous error messages.
+  void _clearError() {
+    _errorMessage = null;
     notifyListeners();
   }
 }

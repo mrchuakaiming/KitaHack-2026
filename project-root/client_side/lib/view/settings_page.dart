@@ -1,14 +1,17 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'common_widgets.dart'; 
 import '../viewmodels/settings_page_vm.dart';
+import '../services/firestore_service.dart'; // Direct import for fetching initial data
+import '../models/user.dart';
 
 /// The User Profile and Settings Screen.
 ///
-/// Allows the user to:
-/// 1. View and Edit their Profile (Username, Cuisines, Dietary).
-/// 2. Clear their Preferences.
-/// 3. Delete their Account.
+/// **Architecture Note:**
+/// Since [SettingsViewModel] is restricted to *Actions Only* (Update/Reset/Delete),
+/// this View is responsible for fetching the initial [UserModel] state directly
+/// from [FirestoreService] to populate the text fields.
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
 
@@ -17,44 +20,48 @@ class SettingsPage extends StatefulWidget {
 }
 
 class _SettingsPageState extends State<SettingsPage> {
-  // Controllers
+  // --- STATE ---
   late TextEditingController _usernameController;
-  // We use Lists of Controllers for dynamic fields
   List<TextEditingController> _cuisineControllers = [];
   List<TextEditingController> _dietaryControllers = [];
+  
+  bool _isLoadingData = true; // Local loading state for fetching initial data
+  bool _isEditing = false;    // Local UI state for Edit Mode
 
   @override
   void initState() {
     super.initState();
     _usernameController = TextEditingController();
-    
-    // Load data when page opens
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      context.read<SettingsViewModel>().loadProfile().then((_) {
-        _populateControllers();
-      });
-    });
+    _fetchUserData();
   }
 
-  /// Syncs the TextControllers with the ViewModel's data.
-  /// Called on load and after saving/clearing data.
-  void _populateControllers() {
-    final vm = context.read<SettingsViewModel>();
-    final user = vm.userModel;
+  /// Fetches the current user's data to populate the form.
+  /// This is done here because the VM is restricted to actions only.
+  Future<void> _fetchUserData() async {
+    final user = FirebaseAuth.instance.currentUser;
     if (user != null) {
-      _usernameController.text = user.username;
+      // Direct call to service to get data
+      UserModel? userModel = await FirestoreService().getUser(user.uid);
       
-      // Reset and fill lists
-      _cuisineControllers = user.preferredCuisine
-          .map((t) => TextEditingController(text: t))
-          .toList();
-      _dietaryControllers = user.dietaryRestrictions
-          .map((t) => TextEditingController(text: t))
-          .toList();
-      
-      // Rebuild to show new data
-      if (mounted) setState(() {}); 
+      if (userModel != null && mounted) {
+        _populateControllers(userModel);
+      }
     }
+    
+    if (mounted) setState(() => _isLoadingData = false);
+  }
+
+  /// Syncs the TextControllers with the fetched data.
+  void _populateControllers(UserModel user) {
+    _usernameController.text = user.username;
+    
+    _cuisineControllers = user.preferredCuisine
+        .map((t) => TextEditingController(text: t))
+        .toList();
+    
+    _dietaryControllers = user.dietaryRestrictions
+        .map((t) => TextEditingController(text: t))
+        .toList();
   }
 
   @override
@@ -65,9 +72,9 @@ class _SettingsPageState extends State<SettingsPage> {
     super.dispose();
   }
 
-  // --- ACTIONS ---
+  // --- ACTIONS (Delegated to ViewModel) ---
 
-  /// Collects data from controllers and calls updateProfile.
+  /// Collects data from controllers and calls [SettingsViewModel.updateProfile].
   void _handleSave() async {
     final vm = context.read<SettingsViewModel>();
     
@@ -82,13 +89,33 @@ class _SettingsPageState extends State<SettingsPage> {
     );
 
     if (success && mounted) {
+      setState(() => _isEditing = false); // Exit edit mode on success
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text("Profile Updated!"), backgroundColor: Colors.green),
       );
     }
   }
 
-  /// Shows confirmation dialog and calls rmAccount.
+  /// Calls [SettingsViewModel.resetPassword].
+  void _handleResetPassword() async {
+    final vm = context.read<SettingsViewModel>();
+    await vm.resetPassword();
+    
+    if (mounted) {
+      // Check if VM set an error, otherwise assume success
+      if (vm.errorMessage == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Password reset email sent!")),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(vm.errorMessage!), backgroundColor: Colors.red),
+        );
+      }
+    }
+  }
+
+  /// Shows confirmation dialog and calls [SettingsViewModel.deleteAccount].
   void _handleDeleteAccount() async {
     // 1. Confirm Dialog
     bool? confirm = await showDialog(
@@ -107,13 +134,13 @@ class _SettingsPageState extends State<SettingsPage> {
       final vm = context.read<SettingsViewModel>();
       
       // 2. Perform Deletion
-      bool success = await vm.rmAccount();
+      bool success = await vm.deleteAccount();
 
       if (success && mounted) {
         // 3. Navigate to Login (Clear history)
         Navigator.pushNamedAndRemoveUntil(context, '/login', (route) => false);
       } else if (mounted) {
-        // Show Error (e.g. "Requires Recent Login")
+        // Show Error
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(vm.errorMessage ?? "Failed to delete"), backgroundColor: Colors.red),
         );
@@ -121,36 +148,19 @@ class _SettingsPageState extends State<SettingsPage> {
     }
   }
 
-  /// Calls clearData and refreshes the UI controllers.
-  void _handleClearData() async {
-    final vm = context.read<SettingsViewModel>();
-    bool success = await vm.clearData();
-    if (success && mounted) {
-      _populateControllers(); // Refresh UI to show empty lists
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Preferences Cleared"), backgroundColor: Colors.green),
-      );
-    }
-  }
-
   // --- DYNAMIC FIELDS HELPERS ---
   
-  void _addCuisine() {
-    setState(() => _cuisineControllers.add(TextEditingController()));
-  }
-
-  void _addDietary() {
-    setState(() => _dietaryControllers.add(TextEditingController()));
-  }
+  void _addCuisine() => setState(() => _cuisineControllers.add(TextEditingController()));
+  void _addDietary() => setState(() => _dietaryControllers.add(TextEditingController()));
 
   @override
   Widget build(BuildContext context) {
+    // Watch VM for loading state during actions (Save/Delete)
     final vm = context.watch<SettingsViewModel>();
-    final user = vm.userModel;
 
-    // Show loading spinner if initially fetching user
-    if (vm.isLoading && user == null) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    // Show spinner if we are fetching initial data OR if VM is performing an action
+    if (_isLoadingData || vm.isLoading) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator(color: kPrimaryColor)));
     }
 
     return Scaffold(
@@ -159,8 +169,8 @@ class _SettingsPageState extends State<SettingsPage> {
         actions: [
           // Edit/Save Toggle Button
           IconButton(
-            icon: Icon(vm.isEditing ? Icons.save : Icons.edit),
-            onPressed: vm.isEditing ? _handleSave : vm.toggleEdit,
+            icon: Icon(_isEditing ? Icons.save : Icons.edit),
+            onPressed: _isEditing ? _handleSave : () => setState(() => _isEditing = true),
           )
         ],
       ),
@@ -174,15 +184,12 @@ class _SettingsPageState extends State<SettingsPage> {
                 children: [
                   const Icon(Icons.account_circle, size: 80, color: kPrimaryColor),
                   const SizedBox(height: 10),
-                  Text(user?.email ?? "No Email", style: const TextStyle(color: Colors.grey)),
-                  const SizedBox(height: 20),
-                  
                   // Username Field (Editable based on state)
                   AuthTextField(
                     labelText: "Username",
                     obscureText: false,
                     controller: _usernameController,
-                    readOnly: !vm.isEditing,
+                    readOnly: !_isEditing,
                     prefixIcon: const Icon(Icons.person),
                   ),
                 ],
@@ -191,25 +198,26 @@ class _SettingsPageState extends State<SettingsPage> {
             const SizedBox(height: 20),
 
             // --- LISTS (Cuisine / Dietary) ---
-            if (vm.isEditing) ...[
+            if (_isEditing) ...[
                // Edit Mode: Show Add/Delete buttons
                _buildEditListSection("Cuisines", _cuisineControllers, _addCuisine),
                const SizedBox(height: 20),
                _buildEditListSection("Dietary Restrictions", _dietaryControllers, _addDietary),
             ] else ...[
                // View Mode: Show Read-Only Chips
-               _buildReadListSection("Cuisines", user?.preferredCuisine ?? []),
+               // We extract text from controllers to display in chips
+               _buildReadListSection("Cuisines", _cuisineControllers.map((c) => c.text).toList()),
                const SizedBox(height: 10),
-               _buildReadListSection("Dietary Restrictions", user?.dietaryRestrictions ?? []),
+               _buildReadListSection("Dietary Restrictions", _dietaryControllers.map((c) => c.text).toList()),
             ],
 
             const SizedBox(height: 30),
 
             // --- ACCOUNT ACTIONS (View Mode Only) ---
-            if (!vm.isEditing) ...[
+            if (!_isEditing) ...[
               AuthButton(
-                text: "Clear Preferences",
-                onPressed: _handleClearData,
+                text: "Reset Password",
+                onPressed: _handleResetPassword,
               ),
               const SizedBox(height: 15),
               SizedBox(
@@ -241,7 +249,6 @@ class _SettingsPageState extends State<SettingsPage> {
 
   // --- WIDGET HELPERS ---
 
-  /// Builds a read-only list of chips.
   Widget _buildReadListSection(String title, List<String> items) {
     return AuthBox(
       child: Column(
@@ -261,7 +268,6 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
-  /// Builds an editable list of text fields with add/remove buttons.
   Widget _buildEditListSection(String title, List<TextEditingController> controllers, VoidCallback onAdd) {
     return AuthBox(
       child: Column(

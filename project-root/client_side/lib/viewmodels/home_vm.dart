@@ -2,24 +2,28 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../coordinators/coordinator.dart';
 import '../models/user.dart';
-import '../services/firestore_service.dart'; 
-
-// TODO: joinRoom() function from coordinator.dart
+import '../services/firestore_service.dart';
 
 /// The ViewModel for the Home Dashboard.
 ///
-/// This class manages the state for the Home screen, specifically:
-/// 1. **Fetching Rooms:** Retrieving the list of rooms hosted by the current user.
-/// 2. **Creating Rooms:** Delegating the logic to [Coordinator.newRoom].
-/// 3. **Joining Rooms:** Validating room codes.
+/// **Scope:**
+/// This ViewModel is currently restricted to **Room Creation** only.
+///
+/// **Responsibilities:**
+/// 1.  **State Management:** Tracks loading state and the list of locally created rooms.
+/// 2.  **Action:** Implements [newRoom] to create a room via the Coordinator.
 class HomeViewModel extends ChangeNotifier {
   
   // --- DEPENDENCIES ---
   final Coordinator _coordinator;
-  final FirestoreService _db; 
+  final FirestoreService _db;
 
   // --- STATE ---
+  
+  /// Stores rooms. Since we don't fetch from DB on init (per instructions),
+  /// this will only contain rooms created during this session.
   List<String> _hostedRooms = [];
+  
   bool _isLoading = false;
   String? _errorMessage;
 
@@ -34,48 +38,28 @@ class HomeViewModel extends ChangeNotifier {
   String? get errorMessage => _errorMessage;
 
   // ====================================================================
-  // 1. FETCH ROOMS (Initialization)
+  // NEW ROOM ONLY
   // ====================================================================
 
-  /// Fetches the current user's profile to populate the [hostedRooms] list.
-  Future<void> fetchRooms() async {
-    _setLoading(true);
-    
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) {
-      _hostedRooms = [];
-      _setLoading(false);
-      return;
-    }
-
-    try {
-      UserModel? userModel = await _db.getUser(user.uid);
-      
-      if (userModel != null) {
-        _hostedRooms = userModel.hostedRooms;
-      } else {
-        _hostedRooms = [];
-      }
-    } catch (e) {
-      debugPrint("Error fetching rooms: $e");
-      _hostedRooms = [];
-    } finally {
-      _setLoading(false);
-    }
-  }
-
-  // ====================================================================
-  // 2. CREATE NEW ROOM
-  // ====================================================================
-
-  /// Orchestrates the creation of a new room via the Coordinator.
+  /// Orchestrates the creation of a new room.
+  ///
+  /// **Logic:**
+  /// 1.  Checks Authentication.
+  /// 2.  Fetches current User context.
+  /// 3.  Delegates to [Coordinator.newRoom] (Handles ID Gen, Limits, DB Write).
+  /// 4.  Updates local [_hostedRooms] with the result.
+  ///
+  /// **Returns:**
+  /// * `null`: Success.
+  /// * `String`: Error code ("limit_reached") or message.
   Future<String?> newRoom() async {
     _setLoading(true);
-    
+    _clearError();
+
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) {
       _setLoading(false);
-      return "You must be logged in to create a room.";
+      return "You must be logged in.";
     }
 
     try {
@@ -98,8 +82,9 @@ class HomeViewModel extends ChangeNotifier {
 
     } on StateError catch (e) {
       _setLoading(false);
+      // Map specific coordinator errors to UI codes
       if (e.message == 'host-limit-reached') {
-        return "You have reached the limit of 5 active rooms.";
+        return "limit_reached"; 
       }
       return e.message;
     } catch (e) {
@@ -108,32 +93,15 @@ class HomeViewModel extends ChangeNotifier {
     }
   }
 
-  // ====================================================================
-  // 3. JOIN ROOM
-  // ====================================================================
-
-  /// Validates a room code before allowing the user to join.
-  Future<bool> joinRoom(String code) async {
-    if (code.isEmpty) return false;
-
-    _setLoading(true);
-
-    try {
-      // FIX: Use getRoom to check for existence (returns null if not found)
-      var roomData = await _db.getRoom(code);
-      bool exists = roomData != null;
-      
-      _setLoading(false);
-      return exists;
-    } catch (e) {
-      _setLoading(false);
-      return false;
-    }
-  }
-
   // --- INTERNAL HELPERS ---
+
   void _setLoading(bool value) {
     _isLoading = value;
+    notifyListeners();
+  }
+
+  void _clearError() {
+    _errorMessage = null;
     notifyListeners();
   }
 }
