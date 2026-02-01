@@ -1,34 +1,35 @@
-///Need to change
 import 'dart:convert';
 import 'package:http/http.dart' as http;
+import 'participant_model.dart'; // Make sure this path points to your ParticipantModel
 
 /// AIService
 ///
 /// Client-side transport layer only.
-/// No AI logic lives here.
+/// Sends aggregated participant data to server.
 class AIService {
   final String serverBaseUrl;
 
-  AIService({required this.serverBaseUrl}); //change to your server URL
+  AIService({required this.serverBaseUrl}); // Set to your server URL
 
-  /// Sends room preference data to server
+  /// Sends aggregated participant preferences to the server
   ///
-  /// Server handles:
-  /// data_converter() → our_model() → prompt generation
-  Future<Map<String, String>> generateRecommendation({
-    required String roomId,
-    required List<Map<String, dynamic>> participantsPayload,
+  /// Accepts a list of ParticipantModel and converts to JSON internally.
+  Future<Map<String, String>> sendParticipantsData({
+    required List<ParticipantModel> participants,
   }) async {
-    final url = Uri.parse('$serverBaseUrl/ai/generate'); // Endpoint URL
+    final url = Uri.parse('$serverBaseUrl/ai/participants'); // Single server endpoint
+
+    // Convert ParticipantModel list to JSON
+    final participantsPayload =
+        participants.map((p) => p.toJson()).toList();
 
     final payload = {
-      "roomId": roomId,
       "participants": participantsPayload,
     };
 
     try {
       final response = await http.post(
-        url, // change
+        url,
         headers: const {
           "Content-Type": "application/json",
         },
@@ -44,7 +45,7 @@ class AIService {
 
       final decoded = jsonDecode(response.body) as Map<String, dynamic>;
 
-      // Server guarantees string-only response
+      // Convert all values to string for consistency
       return decoded.map(
         (k, v) => MapEntry(k, v.toString()),
       );

@@ -1,9 +1,9 @@
 class ParticipantModel {
-  /// Firebase user ID
-  final String uid;
+  // /// Firebase user ID
+  // final String uid;
 
-  /// Room ID
-  final String roomId;
+  // /// Room ID
+  // final String roomId;
 
   /// Live preferences for this room (max 3)
   ///
@@ -27,8 +27,8 @@ class ParticipantModel {
   final List<String> dietaryRestrictions;
 
   ParticipantModel({
-    required this.uid,
-    required this.roomId,
+    // required this.uid,
+    // required this.roomId,
     List<Map<String, dynamic>>? livePreferences,
     List<String>? defaultPreferences,
     required (int min, int max) budget,
@@ -47,8 +47,8 @@ class ParticipantModel {
 
   /// Convert ParticipantModel → Firestore JSON
   Map<String, dynamic> toJson() => {
-        "uid": uid,
-        "roomId": roomId,
+        // "uid": uid,
+        // "roomId": roomId,
         "livePreferences": livePreferences
             .map((pref) => {
                   if (pref["cuisine"] != null) "cuisine": pref["cuisine"],
@@ -68,8 +68,8 @@ class ParticipantModel {
     final budgetJson = json["budget"] ?? {};
 
     return ParticipantModel(
-      uid: json["uid"],
-      roomId: json["roomId"],
+      // uid: json["uid"],
+      // roomId: json["roomId"],
       livePreferences: (json["livePreferences"] as List<dynamic>?)
               ?.map((e) => {
                     "cuisine": e["cuisine"],
