@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-// TODO: searchRestaurant(), submitPreferences(), leaveRoom(), geenerateRecommendation(), storeRecommendation(), getRecommendation()
+// TODO: searchRestaurant(), submitPreferences(), leaveRoom(), geenerateRecommendation(), storeRecommendation(), getRecommendation(), wantResult() from coordinator.dart
 
 /// The ViewModel responsible for the Active Room (Lobby) state.
 class RoomViewModel extends ChangeNotifier {

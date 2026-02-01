@@ -300,6 +300,39 @@ class Coordinator {
     } catch (_) {/* non-fatal */}
   }
 
+    // -------------------------- getHostedRoomIds ---------------------------
+
+    /// Returns the list of room document IDs hosted by the given [hostUid].
+    ///
+    /// QUERY
+    ///   rooms where host_uid == hostUid
+    ///
+    /// RETURNS
+    ///   List<String> — each entry is the Firestore document ID (roomId).
+    ///
+    /// ERRORS
+    ///   Surfaces [FirebaseException] on query errors for the UI to handle.
+    Future<List<String>> getHostedRoomIds({required String hostUid}) async {
+    // Optional analytics breadcrumbs (non-fatal).
+    try { await _analytics.logEvent('get_hosted_room_ids_started', params: {'host_uid': hostUid}); } catch (_) {}
+
+    final snapshot = await FirebaseFirestore.instance
+        .collection('rooms')
+        .where('host_uid', isEqualTo: hostUid)
+        .get(); // single query for hosted rooms 
+
+    final ids = snapshot.docs.map((doc) => doc.id).toList(growable: false);
+
+    try {
+        await _analytics.logEvent('get_hosted_room_ids_success', params: {
+        'host_uid': hostUid,
+        'count': ids.length,
+        });
+    } catch (_) {}
+
+    return ids;
+    }
+
 /* ====================================================================
  * 3. CREATE ROOM
  * --------------------------------------------------------------------
