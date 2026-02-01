@@ -428,3 +428,152 @@ class Coordinator {
     return updated;
     }
 }
+
+/* ====================================================================
+ * 8. UPDATE PROFILE
+ * --------------------------------------------------------------------
+ * This section handles updating mutable user profile fields.
+ *
+ * Design notes:
+ *  - Users can change:
+ *      * username
+ *      * dietaryRestrictions
+ *      * preferredCuisine (default cuisine preferences)
+ *  - Email and uid are immutable
+ *  - Updates Firestore only via UserModel serialization
+ *  - Errors are wrapped in application-level exceptions
+ * ==================================================================== */
+
+/// Updates the currently signed-in user's profile in Firestore.
+Future<void> updateProfile({required UserModel updated}) async {
+  try {
+    // Prepare Firestore fields for partial update.
+    // Trim whitespace and remove any empty strings to avoid storing invalid data.
+    final fields = <String, dynamic>{
+      'username': updated.username.trim(), // Updated username
+      'dietary_restrictions': updated.dietaryRestrictions
+          .map((e) => e.trim())           // Trim each dietary restriction
+          .where((e) => e.isNotEmpty)     // Remove empty strings
+          .toList(growable: false),       // Immutable list for Firestore
+      'preferred_cuisine': updated.preferredCuisine
+          .map((e) => e.trim())           // Trim each cuisine
+          .where((e) => e.isNotEmpty)     // Remove empty strings
+          .toList(growable: false),       // Immutable list for Firestore
+    };
+
+    // Perform the partial update in Firestore using a helper service
+    await FirestoreService().updateUserFields(updated.uid, fields);
+  } on FirebaseException catch (e) {
+    // Firebase-specific errors are caught and rethrown with more context
+    throw Exception(
+      'Failed to update profile (${e.code}): ${e.message}',
+    );
+  } catch (e) {
+    // Catch-all for any unexpected errors
+    throw Exception('Unexpected error while updating profile: $e');
+  }
+}
+
+/* ====================================================================
+ * 9. CHANGE PASSWORD
+ * --------------------------------------------------------------------
+ * This section handles password reset via Firebase Auth.
+ *
+ * Design notes:
+ *  - User does not need to be signed in
+ *  - Firestore is not touched
+ *  - Common FirebaseAuth errors are mapped to readable messages
+ * ==================================================================== */
+
+/// Sends a password reset email to [email].
+Future<void> resetPassword(String email) async {
+  try {
+    // Trim email and send password reset email via Firebase Auth
+    await FirebaseAuth.instance.sendPasswordResetEmail(
+      email: email.trim(),
+    );
+  } on FirebaseAuthException catch (e) {
+    // Map Firebase error codes to friendly messages
+    switch (e.code) {
+      case 'user-not-found':
+        throw Exception('No user found with this email.');
+      case 'invalid-email':
+        throw Exception('Invalid email address.');
+      default:
+        throw Exception(e.message ?? 'Failed to reset password.');
+    }
+  } catch (e) {
+    // Catch-all for any unexpected errors
+    throw Exception('Unexpected error occurred: $e');
+  }
+}
+
+/* ====================================================================
+ * 10. DELETE ACCOUNT
+ * --------------------------------------------------------------------
+ * This section handles full account deletion.
+ *
+ * ORDER OF OPERATIONS
+ *  1) clearData(uid)   -> Delete all Firestore user data
+ *  2) removeAcc(user)  -> Delete Firebase Auth user
+ *
+ * Design notes:
+ *  - Firestore data is deleted first to avoid orphaned documents
+ *  - Auth deletion may require recent login
+ *  - Helpers are internal and wrapped with exceptions
+ * ==================================================================== */
+
+/// Deletes the currently signed-in user's account and all associated Firestore data.
+Future<void> deleteAccount() async {
+  final user = FirebaseAuth.instance.currentUser;
+
+  if (user == null) {
+    // Ensure there is a signed-in user before attempting deletion
+    throw Exception('No authenticated user.');
+  }
+
+  try {
+    // 1) Delete all Firestore documents related to this user
+    await clearData(user.uid);
+
+    // 2) Delete the user's Firebase Authentication account
+    await removeAcc(user);
+  } catch (e) {
+    // Wrap any errors during deletion
+    throw Exception('Failed to delete account: $e');
+  }
+}
+
+/* =========================
+ * Helper functions (internal)
+ * ========================= */
+
+/// Clears all Firestore documents for the given [uid].
+Future<void> clearData(String uid) async {
+  try {
+    await FirebaseFirestore.instance
+        .collection('users')
+        .doc(uid)
+        .delete(); // Delete user document
+  } catch (e) {
+    throw Exception('Failed to clear user data: $e');
+  }
+}
+
+/// Removes a Firebase Auth [user] account.
+/// May throw 'requires-recent-login' if the user hasn't logged in recently.
+Future<void> removeAcc(User user) async {
+  try {
+    await user.delete();
+  } on FirebaseAuthException catch (e) {
+    if (e.code == 'requires-recent-login') {
+      // Specific error when account deletion requires a recent login
+      throw Exception('Recent login required to delete account.');
+    }
+    // Other FirebaseAuth errors
+    throw Exception(e.message ?? 'Failed to remove account.');
+  } catch (e) {
+    // Catch-all for any unexpected errors
+    throw Exception('Unexpected error occurred: $e');
+  }
+}
