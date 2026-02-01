@@ -1,17 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'common_widgets.dart';
-import 'bottom_nav.dart';
+import 'common_widgets.dart'; 
 import '../viewmodels/settings_page_vm.dart';
 
-/// The user profile and application settings screen.
+/// The User Profile and Settings Screen.
 ///
-/// This widget serves as the central hub for user account management.
-/// It provides functionality for:
-/// 1. **Profile Editing:** Viewing and updating the username.
-/// 2. **Account Security:** Triggering password resets (via email).
-/// 3. **Data Management:** Clearing local history or permanently deleting the account.
-/// 4. **Session Management:** Logging out of the application.
+/// Allows the user to:
+/// 1. View and Edit their Profile (Username, Cuisines, Dietary).
+/// 2. Clear their Preferences.
+/// 3. Delete their Account.
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
 
@@ -20,220 +17,279 @@ class SettingsPage extends StatefulWidget {
 }
 
 class _SettingsPageState extends State<SettingsPage> {
-  // --- UI CONTROLLERS ---
-  // TextControllers manage the input fields for the profile section.
-  final _usernameController = TextEditingController();
-  final _emailController = TextEditingController();
+  // Controllers
+  late TextEditingController _usernameController;
+  // We use Lists of Controllers for dynamic fields
+  List<TextEditingController> _cuisineControllers = [];
+  List<TextEditingController> _dietaryControllers = [];
 
-  /// Initializes the state and loads user data.
-  ///
-  /// Calls [SettingsViewModel.loadProfile] to fetch the latest user details
-  /// (like username and email) from the backend/service layer and populates
-  /// the text controllers.
   @override
   void initState() {
     super.initState();
-    // Load initial profile data
-    final vm = context.read<SettingsViewModel>();
-    vm.loadProfile().then((_) {
-      _usernameController.text = vm.username;
-      _emailController.text = vm.email;
+    _usernameController = TextEditingController();
+    
+    // Load data when page opens
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      context.read<SettingsViewModel>().loadProfile().then((_) {
+        _populateControllers();
+      });
     });
   }
 
-  /// Disposes controllers to free up system resources.
+  /// Syncs the TextControllers with the ViewModel's data.
+  /// Called on load and after saving/clearing data.
+  void _populateControllers() {
+    final vm = context.read<SettingsViewModel>();
+    final user = vm.userModel;
+    if (user != null) {
+      _usernameController.text = user.username;
+      
+      // Reset and fill lists
+      _cuisineControllers = user.preferredCuisine
+          .map((t) => TextEditingController(text: t))
+          .toList();
+      _dietaryControllers = user.dietaryRestrictions
+          .map((t) => TextEditingController(text: t))
+          .toList();
+      
+      // Rebuild to show new data
+      if (mounted) setState(() {}); 
+    }
+  }
+
   @override
   void dispose() {
     _usernameController.dispose();
-    _emailController.dispose();
+    for (var c in _cuisineControllers) c.dispose();
+    for (var c in _dietaryControllers) c.dispose();
     super.dispose();
   }
 
-  // --- CONFIRMATION DIALOG HELPER ---
+  // --- ACTIONS ---
 
-  /// Displays a generic modal dialog to confirm sensitive actions.
-  ///
-  /// This reusable function is used for actions like "Clear History" or "Delete Account".
-  ///
-  /// * [title]: The headline of the dialog.
-  /// * [content]: The explanatory text warning the user of consequences.
-  /// * [isDangerous]: If true, styles the "Confirm" button in red to indicate risk.
-  ///
-  /// Returns `true` if the user clicked "Confirm", otherwise `false`.
-  Future<bool> _showConfirmation(String title, String content, {bool isDangerous = false}) async {
-    return await showDialog<bool>(
+  /// Collects data from controllers and calls updateProfile.
+  void _handleSave() async {
+    final vm = context.read<SettingsViewModel>();
+    
+    // Extract Strings from Controllers
+    final cuisines = _cuisineControllers.map((c) => c.text).toList();
+    final dietary = _dietaryControllers.map((c) => c.text).toList();
+
+    bool success = await vm.updateProfile(
+      username: _usernameController.text,
+      cuisines: cuisines,
+      dietary: dietary,
+    );
+
+    if (success && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Profile Updated!"), backgroundColor: Colors.green),
+      );
+    }
+  }
+
+  /// Shows confirmation dialog and calls rmAccount.
+  void _handleDeleteAccount() async {
+    // 1. Confirm Dialog
+    bool? confirm = await showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: Text(title, style: TextStyle(color: isDangerous ? Colors.red : Colors.black)),
-        content: Text(content),
+        title: const Text("Delete Account?"),
+        content: const Text("This action is permanent and cannot be undone."),
         actions: [
-          // Cancel Button
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text("Cancel", style: TextStyle(color: Colors.grey)),
-          ),
-          // Confirm Button (styled based on danger level)
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: Text("Confirm", style: TextStyle(fontWeight: FontWeight.bold, color: isDangerous ? Colors.red : kPrimaryColor)),
-          ),
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("Cancel")),
+          TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text("Delete", style: TextStyle(color: Colors.red))),
         ],
       ),
-    ) ?? false; // Default to false if dialog is dismissed by tapping outside
+    );
+
+    if (confirm == true && mounted) {
+      final vm = context.read<SettingsViewModel>();
+      
+      // 2. Perform Deletion
+      bool success = await vm.rmAccount();
+
+      if (success && mounted) {
+        // 3. Navigate to Login (Clear history)
+        Navigator.pushNamedAndRemoveUntil(context, '/login', (route) => false);
+      } else if (mounted) {
+        // Show Error (e.g. "Requires Recent Login")
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(vm.errorMessage ?? "Failed to delete"), backgroundColor: Colors.red),
+        );
+      }
+    }
+  }
+
+  /// Calls clearData and refreshes the UI controllers.
+  void _handleClearData() async {
+    final vm = context.read<SettingsViewModel>();
+    bool success = await vm.clearData();
+    if (success && mounted) {
+      _populateControllers(); // Refresh UI to show empty lists
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Preferences Cleared"), backgroundColor: Colors.green),
+      );
+    }
+  }
+
+  // --- DYNAMIC FIELDS HELPERS ---
+  
+  void _addCuisine() {
+    setState(() => _cuisineControllers.add(TextEditingController()));
+  }
+
+  void _addDietary() {
+    setState(() => _dietaryControllers.add(TextEditingController()));
   }
 
   @override
   Widget build(BuildContext context) {
-    // Watch the ViewModel for changes (e.g., loading state, edit mode toggle)
     final vm = context.watch<SettingsViewModel>();
+    final user = vm.userModel;
+
+    // Show loading spinner if initially fetching user
+    if (vm.isLoading && user == null) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
 
     return Scaffold(
-      appBar: AppBar(title: const Text("Settings"), automaticallyImplyLeading: false),
-      
-      // Show a loading spinner if the VM is performing an async operation
-      body: vm.isLoading
-          ? const Center(child: CircularProgressIndicator(color: kPrimaryColor))
-          : SingleChildScrollView(
-              padding: const EdgeInsets.all(20),
+      appBar: AppBar(
+        title: const Text("Profile", style: TextStyle(fontWeight: FontWeight.bold)),
+        actions: [
+          // Edit/Save Toggle Button
+          IconButton(
+            icon: Icon(vm.isEditing ? Icons.save : Icons.edit),
+            onPressed: vm.isEditing ? _handleSave : vm.toggleEdit,
+          )
+        ],
+      ),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          children: [
+            // --- HEADER ---
+            AuthBox(
               child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // --- 1. PROFILE SECTION ---
-                  // Handles Username and Email display/editing.
-                  const Text("Profile", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                  const Icon(Icons.account_circle, size: 80, color: kPrimaryColor),
                   const SizedBox(height: 10),
-                  AuthBox(
-                    child: Column(
-                      children: [
-                        // Username Field (Editable based on vm.isEditing)
-                        AuthTextField(
-                          labelText: "Username",
-                          obscureText: false,
-                          controller: _usernameController,
-                          readOnly: !vm.isEditing,
-                          prefixIcon: const Icon(Icons.person),
-                        ),
-                        // Email Field (Always Read-Only)
-                        AuthTextField(
-                          labelText: "Email",
-                          obscureText: false,
-                          controller: _emailController,
-                          readOnly: true, // Email usually cannot be changed easily
-                          prefixIcon: const Icon(Icons.email),
-                        ),
-                        const SizedBox(height: 10),
-                        
-                        // Edit / Save Button Toggle
-                        Align(
-                          alignment: Alignment.centerRight,
-                          child: vm.isEditing
-                            ? ElevatedButton.icon(
-                                icon: const Icon(Icons.check, size: 16),
-                                label: const Text("Save Changes"),
-                                style: ElevatedButton.styleFrom(backgroundColor: kPrimaryColor, foregroundColor: Colors.white),
-                                onPressed: () async {
-                                  // Save changes via VM
-                                  await vm.updateProfile(_usernameController.text);
-                                  if (mounted) {
-                                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Profile Updated")));
-                                  }
-                                },
-                              )
-                            : TextButton.icon(
-                                icon: const Icon(Icons.edit, size: 16, color: kPrimaryColor),
-                                label: const Text("Edit Profile", style: TextStyle(color: kPrimaryColor)),
-                                onPressed: () => vm.toggleEdit(),
-                              ),
-                        )
-                      ],
-                    ),
-                  ),
-
-                  const SizedBox(height: 30),
-
-                  // --- 2. ACCOUNT ACTIONS ---
-                  // General account maintenance (Passwords, History, Logout).
-                  const Text("Account", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 10),
-                  Container(
-                    decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), boxShadow: [BoxShadow(color: Colors.grey.shade200, blurRadius: 5)]),
-                    child: Column(
-                      children: [
-                        // Reset Password (Navigates to the Reset Password Flow)
-                        ListTile(
-                          leading: const Icon(Icons.lock_reset, color: Colors.blue),
-                          title: const Text("Reset Password"), 
-                          subtitle: const Text("Send a reset link to your email"),
-                          onTap: () {
-                            // Navigate to the shared Reset Password screen
-                            Navigator.pushNamed(context, '/reset_password');
-                          },
-                        ),
-                        const Divider(height: 1),
-                        
-                        // Clear History
-                        ListTile(
-                          leading: const Icon(Icons.cleaning_services, color: Colors.orange),
-                          title: const Text("Clear History"),
-                          subtitle: const Text("Remove all past room data"),
-                          onTap: () async {
-                            // Require user confirmation before clearing data
-                            bool confirm = await _showConfirmation("Clear History?", "This will remove all your hosted rooms and preferences.");
-                            if (confirm) {
-                              await vm.clearData();
-                              if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("History Cleared")));
-                            }
-                          },
-                        ),
-                        const Divider(height: 1),
-
-                        // Logout
-                        ListTile(
-                          leading: const Icon(Icons.exit_to_app, color: Colors.black),
-                          title: const Text("Log Out"),
-                          onTap: () => vm.logout(context),
-                        ),
-                      ],
-                    ),
-                  ),
-
-                  const SizedBox(height: 30),
-
-                  // --- 3. DANGER ZONE ---
-                  // Destructive actions involving permanent data loss.
-                  const Text("Danger Zone", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.red)),
-                  const SizedBox(height: 10),
-                  Container(
-                    decoration: BoxDecoration(color: Colors.red.shade50, borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.red.shade100)),
-                    child: ListTile(
-                      leading: const Icon(Icons.delete_forever, color: Colors.red),
-                      title: const Text("Delete Account", style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
-                      subtitle: const Text("Permanently remove all data"),
-                      onTap: () async {
-                        // Strict double-confirmation for account deletion
-                        bool confirm = await _showConfirmation(
-                          "Delete Account?", 
-                          "This action is irreversible. All your data will be lost forever.", 
-                          isDangerous: true
-                        );
-                        
-                        if (confirm) {
-                          bool success = await vm.rmAccount();
-                          if (success && mounted) {
-                            // Redirect to login screen on success
-                            Navigator.pushNamedAndRemoveUntil(context, '/login', (route) => false);
-                          }
-                        }
-                      },
-                    ),
-                  ),
-                  
+                  Text(user?.email ?? "No Email", style: const TextStyle(color: Colors.grey)),
                   const SizedBox(height: 20),
+                  
+                  // Username Field (Editable based on state)
+                  AuthTextField(
+                    labelText: "Username",
+                    obscureText: false,
+                    controller: _usernameController,
+                    readOnly: !vm.isEditing,
+                    prefixIcon: const Icon(Icons.person),
+                  ),
                 ],
               ),
             ),
-      // Uses the custom bottom navigation bar, highlighting the "Profile" tab (index 2)
-      bottomNavigationBar: const CustomBottomNav(currentIndex: 2), 
+            const SizedBox(height: 20),
+
+            // --- LISTS (Cuisine / Dietary) ---
+            if (vm.isEditing) ...[
+               // Edit Mode: Show Add/Delete buttons
+               _buildEditListSection("Cuisines", _cuisineControllers, _addCuisine),
+               const SizedBox(height: 20),
+               _buildEditListSection("Dietary Restrictions", _dietaryControllers, _addDietary),
+            ] else ...[
+               // View Mode: Show Read-Only Chips
+               _buildReadListSection("Cuisines", user?.preferredCuisine ?? []),
+               const SizedBox(height: 10),
+               _buildReadListSection("Dietary Restrictions", user?.dietaryRestrictions ?? []),
+            ],
+
+            const SizedBox(height: 30),
+
+            // --- ACCOUNT ACTIONS (View Mode Only) ---
+            if (!vm.isEditing) ...[
+              AuthButton(
+                text: "Clear Preferences",
+                onPressed: _handleClearData,
+              ),
+              const SizedBox(height: 15),
+              SizedBox(
+                width: double.infinity,
+                height: 50,
+                child: OutlinedButton(
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.red,
+                    side: const BorderSide(color: Colors.red),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                  onPressed: _handleDeleteAccount,
+                  child: const Text("Delete Account"),
+                ),
+              ),
+              const SizedBox(height: 30),
+              
+              // Logout Button
+               TextButton(
+                onPressed: () => Navigator.pushNamedAndRemoveUntil(context, '/login', (route) => false),
+                child: const Text("Log Out", style: TextStyle(color: Colors.grey)),
+              ),
+            ]
+          ],
+        ),
+      ),
+    );
+  }
+
+  // --- WIDGET HELPERS ---
+
+  /// Builds a read-only list of chips.
+  Widget _buildReadListSection(String title, List<String> items) {
+    return AuthBox(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(title, style: const TextStyle(fontWeight: FontWeight.bold)),
+          const SizedBox(height: 10),
+          if (items.isEmpty)
+            const Text("None set", style: TextStyle(color: Colors.grey, fontStyle: FontStyle.italic))
+          else
+            Wrap(
+              spacing: 8,
+              children: items.map((i) => Chip(label: Text(i))).toList(),
+            ),
+        ],
+      ),
+    );
+  }
+
+  /// Builds an editable list of text fields with add/remove buttons.
+  Widget _buildEditListSection(String title, List<TextEditingController> controllers, VoidCallback onAdd) {
+    return AuthBox(
+      child: Column(
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(title, style: const TextStyle(fontWeight: FontWeight.bold)),
+              IconButton(icon: const Icon(Icons.add_circle, color: kPrimaryColor), onPressed: onAdd),
+            ],
+          ),
+          ...controllers.asMap().entries.map((e) => Padding(
+            padding: const EdgeInsets.only(bottom: 8.0),
+            child: Row(
+              children: [
+                Expanded(child: AuthTextField(labelText: "Item", obscureText: false, controller: e.value)),
+                IconButton(
+                  icon: const Icon(Icons.delete, color: Colors.red),
+                  onPressed: () => setState(() {
+                    controllers[e.key].dispose();
+                    controllers.removeAt(e.key);
+                  }),
+                )
+              ],
+            ),
+          )),
+        ],
+      ),
     );
   }
 }

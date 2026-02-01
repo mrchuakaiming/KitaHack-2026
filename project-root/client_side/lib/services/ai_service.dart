@@ -1,3 +1,8 @@
+<<<<<<< Updated upstream
+=======
+///Need to change
+library;
+>>>>>>> Stashed changes
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'participant_model.dart'; // Make sure this path points to your ParticipantModel

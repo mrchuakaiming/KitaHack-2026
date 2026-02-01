@@ -3,14 +3,9 @@ import 'package:provider/provider.dart';
 import 'common_widgets.dart'; 
 import '../viewmodels/reset_password_vm.dart';
 
-/// A dedicated screen for handling password resets.
-/// 
-/// This widget serves a dual purpose:
-/// 1. **Input State:** Allows the user to enter their email address.
-/// 2. **Success State:** Confirms that the reset email has been sent.
-/// 
-/// It can be accessed from the [LoginPage] (if the user forgot their password)
-/// or the [SettingsPage] (if the user wants to change their password).
+/// The Password Reset Screen.
+///
+/// Allows users to enter their email to receive a password recovery link.
 class ResetPasswordPage extends StatefulWidget {
   const ResetPasswordPage({super.key});
 
@@ -19,8 +14,8 @@ class ResetPasswordPage extends StatefulWidget {
 }
 
 class _ResetPasswordPageState extends State<ResetPasswordPage> {
-  // Controller to capture the email input
-  final _emailController = TextEditingController();
+  final TextEditingController _emailController = TextEditingController();
+  final _formKey = GlobalKey<FormState>();
 
   @override
   void dispose() {
@@ -28,115 +23,108 @@ class _ResetPasswordPageState extends State<ResetPasswordPage> {
     super.dispose();
   }
 
+  /// Handles the submit action.
+  void _handleSubmit() async {
+    if (_formKey.currentState!.validate()) {
+      final vm = context.read<ResetPasswordViewModel>();
+      
+      // Call ViewModel
+      await vm.resetPassword(_emailController.text);
+
+      // Check for success after the await completes
+      if (vm.isSuccess && mounted) {
+        _showSuccessDialog();
+      }
+    }
+  }
+
+  /// Displays a success message and navigates back to Login on close.
+  void _showSuccessDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false, // User must tap OK
+      builder: (ctx) => AlertDialog(
+        title: const Text("Email Sent"),
+        content: Text("We have sent a password recovery link to ${_emailController.text}. Please check your inbox."),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.pop(ctx); // Close Dialog
+              Navigator.pop(context); // Go back to Login Page
+            },
+            child: const Text("Back to Login"),
+          )
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    // Watch the ViewModel. This triggers a rebuild whenever 
-    // loading state, error messages, or success state changes.
     final vm = context.watch<ResetPasswordViewModel>();
 
     return Scaffold(
+      // Standard Back Button in AppBar
       appBar: AppBar(
-        title: const Text("Reset Password"),
-        // Custom back button to ensure navigation is intuitive
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back, color: Colors.black),
-          onPressed: () => Navigator.pop(context),
-        ),
+        leading: const BackButton(color: Colors.black),
+        backgroundColor: Colors.transparent,
+        elevation: 0,
       ),
-      body: Padding(
-        padding: const EdgeInsets.all(25.0),
-        // --- CONDITIONAL UI RENDERING ---
-        // If the email was sent successfully, we swap the entire view 
-        // to the Success Confirmation. Otherwise, we show the Input Form.
-        child: vm.isSuccess 
-          ? _buildSuccessView(context) 
-          : _buildInputView(context, vm),
-      ),
-    );
-  }
-
-  // --- VIEW 1: Input Form ---
-  /// Renders the form allowing the user to input their email.
-  Widget _buildInputView(BuildContext context, ResetPasswordViewModel vm) {
-    return Column(
-      children: [
-        // Standard header for consistency
-        const AuthHeader(
-          title: "Reset Password", 
-          subtitle: "Enter your email to receive a password reset link."
-        ),
-        
-        // AuthBox container for the form fields
-        AuthBox(
-          child: Column(
-            children: [
-              // Email Input Field
-              AuthTextField(
-                labelText: "Email Address",
-                obscureText: false,
-                controller: _emailController,
-                prefixIcon: const Icon(Icons.email_outlined),
-              ),
-              const SizedBox(height: 20),
-
-              // Error Message Display
-              // Only renders if the ViewModel catches an error (e.g., "User not found")
-              if (vm.errorMessage != null)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 10),
-                  child: Text(vm.errorMessage!, style: const TextStyle(color: Colors.red)),
-                ),
-
-              // Submit Button
-              // Triggers the verifyEmail function in the ViewModel
-              AuthButton(
-                text: vm.isLoading ? "Sending..." : "Send Link",
-                onPressed: () => vm.verifyEmail(_emailController.text),
-              ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-
-  // --- VIEW 2: Success Confirmation ---
-  /// Renders the success message after the email has been sent.
-  Widget _buildSuccessView(BuildContext context) {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          // Large Success Icon
-          const Icon(Icons.mark_email_read, size: 80, color: Colors.green),
-          const SizedBox(height: 20),
-          
-          // Confirmation Text
-          const Text("Email Sent!", style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
-          const SizedBox(height: 10),
-          Text(
-            "We sent a link to ${_emailController.text}.\nCheck your inbox to reset your password.",
-            textAlign: TextAlign.center,
-            style: const TextStyle(color: Colors.grey),
-          ),
-          
-          const SizedBox(height: 40),
-          
-          // "Done" Button
-          // Pops the current route to return the user to the previous screen (Login or Settings)
-          SizedBox(
-            width: double.infinity,
-            height: 50,
-            child: ElevatedButton(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: kPrimaryColor,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-              ),
-              onPressed: () => Navigator.pop(context),
-              child: const Text("Done", style: TextStyle(color: Colors.white)),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(25),
+        child: Column(
+          children: [
+            const AuthHeader(
+              title: "Forgot Password?",
+              subtitle: "Enter your email to reset your password.",
             ),
-          ),
-        ],
+
+            AuthBox(
+              child: Form(
+                key: _formKey,
+                child: Column(
+                  children: [
+                    const Text(
+                      "Don't worry! It happens. Please enter the email associated with your account.",
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: Colors.grey),
+                    ),
+                    const SizedBox(height: 20),
+
+                    // Email Input
+                    AuthTextField(
+                      labelText: "Email Address",
+                      obscureText: false,
+                      controller: _emailController,
+                      prefixIcon: const Icon(Icons.email_outlined),
+                      validator: (val) => !val!.contains('@') ? "Invalid email" : null,
+                    ),
+
+                    const SizedBox(height: 10),
+
+                    // Error Message Display
+                    if (vm.errorMessage != null)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 10),
+                        child: Text(
+                          vm.errorMessage!, 
+                          style: const TextStyle(color: Colors.red),
+                          textAlign: TextAlign.center,
+                        ),
+                      ),
+
+                    // Submit Button
+                    AuthButton(
+                      text: vm.isLoading ? "Sending..." : "Send Reset Link",
+                      // Disable button if loading to prevent spamming
+                      onPressed: vm.isLoading ? null : _handleSubmit,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

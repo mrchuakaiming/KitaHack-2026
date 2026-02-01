@@ -1,92 +1,137 @@
 import 'package:flutter/material.dart';
-import 'dart:math';
+import 'package:firebase_auth/firebase_auth.dart';
+import '../coordinators/coordinator.dart';
+import '../models/user.dart';
+import '../services/firestore_service.dart'; 
 
-class RoomSummary {
-  final String id;
-  RoomSummary(this.id);
-}
+// TODO: joinRoom() function from coordinator.dart
 
+/// The ViewModel for the Home Dashboard.
+///
+/// This class manages the state for the Home screen, specifically:
+/// 1. **Fetching Rooms:** Retrieving the list of rooms hosted by the current user.
+/// 2. **Creating Rooms:** Delegating the logic to [Coordinator.newRoom].
+/// 3. **Joining Rooms:** Validating room codes.
 class HomeViewModel extends ChangeNotifier {
-  // --- STATE ---
-  final List<RoomSummary> _hostedRooms = [
-    RoomSummary("X92-B41"),
-    RoomSummary("A7X-92B"),
-  ];
   
+  // --- DEPENDENCIES ---
+  final Coordinator _coordinator;
+  final FirestoreService _db; 
+
+  // --- STATE ---
+  List<String> _hostedRooms = [];
   bool _isLoading = false;
-  String? _joinError;
+  String? _errorMessage;
+
+  // --- CONSTRUCTOR ---
+  HomeViewModel({Coordinator? coordinator, FirestoreService? db}) 
+      : _coordinator = coordinator ?? Coordinator(),
+        _db = db ?? FirestoreService();
 
   // --- GETTERS ---
-  List<RoomSummary> get hostedRooms => List.unmodifiable(_hostedRooms);
+  List<String> get hostedRooms => List.unmodifiable(_hostedRooms);
   bool get isLoading => _isLoading;
-  String? get joinError => _joinError;
+  String? get errorMessage => _errorMessage;
 
-  // --- FUNCTIONS ---
+  // ====================================================================
+  // 1. FETCH ROOMS (Initialization)
+  // ====================================================================
 
-  /// 1. Create a New Room
-  Future<String?> newRoom() async {
-    if (_hostedRooms.length >= 5) {
-      return "You can only host 5 rooms at a time.";
+  /// Fetches the current user's profile to populate the [hostedRooms] list.
+  Future<void> fetchRooms() async {
+    _setLoading(true);
+    
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) {
+      _hostedRooms = [];
+      _setLoading(false);
+      return;
     }
 
-    _setLoading(true);
-
-    // TODO: Call RoomService.createRoom()
-    // TODO: Get the real ID from database
-    await Future.delayed(const Duration(milliseconds: 500));
-    
-    // SIMULATION
-    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-    final rnd = Random();
-    String newId = String.fromCharCodes(Iterable.generate(
-      6, (_) => chars.codeUnitAt(rnd.nextInt(chars.length))));
-
-    _hostedRooms.insert(0, RoomSummary(newId));
-    
-    _setLoading(false);
-    return null; // Success
+    try {
+      UserModel? userModel = await _db.getUser(user.uid);
+      
+      if (userModel != null) {
+        _hostedRooms = userModel.hostedRooms;
+      } else {
+        _hostedRooms = [];
+      }
+    } catch (e) {
+      debugPrint("Error fetching rooms: $e");
+      _hostedRooms = [];
+    } finally {
+      _setLoading(false);
+    }
   }
 
-  /// 2. Join an Existing Room
-  /// Returns true if join is successful, false if failed.
-  Future<bool> joinRoom(String code) async {
-    _joinError = null; // Reset error
+  // ====================================================================
+  // 2. CREATE NEW ROOM
+  // ====================================================================
+
+  /// Orchestrates the creation of a new room via the Coordinator.
+  Future<String?> newRoom() async {
+    _setLoading(true);
     
-    if (code.isEmpty) {
-      _joinError = "Please enter a room code";
-      notifyListeners();
-      return false;
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) {
+      _setLoading(false);
+      return "You must be logged in to create a room.";
     }
+
+    try {
+      // 1. Get current user model (required for capacity check)
+      UserModel? currentUserModel = await _db.getUser(user.uid);
+      
+      if (currentUserModel == null) {
+        _setLoading(false);
+        return "User profile not found.";
+      }
+
+      // 2. Delegate creation to Coordinator
+      UserModel updatedUser = await _coordinator.newRoom(currentUser: currentUserModel);
+
+      // 3. Update local state
+      _hostedRooms = updatedUser.hostedRooms;
+      
+      _setLoading(false);
+      return null; // Success
+
+    } on StateError catch (e) {
+      _setLoading(false);
+      if (e.message == 'host-limit-reached') {
+        return "You have reached the limit of 5 active rooms.";
+      }
+      return e.message;
+    } catch (e) {
+      _setLoading(false);
+      return "Failed to create room. Please check your connection.";
+    }
+  }
+
+  // ====================================================================
+  // 3. JOIN ROOM
+  // ====================================================================
+
+  /// Validates a room code before allowing the user to join.
+  Future<bool> joinRoom(String code) async {
+    if (code.isEmpty) return false;
 
     _setLoading(true);
 
-    // TODO: Call RoomService.checkRoomExists(code)
-    // TODO: Call RoomService.addParticipant(code, userId)
-    // TODO: If room is locked/full, return false and set _joinError
-    await Future.delayed(const Duration(seconds: 1));
-
-    // SIMULATION: Check if ID exists in our local list or is "DEMO"
-    bool exists = _hostedRooms.any((r) => r.id == code) || code == "DEMO-123";
-
-    if (!exists) {
-      _joinError = "Room ID not found.";
+    try {
+      // FIX: Use getRoom to check for existence (returns null if not found)
+      var roomData = await _db.getRoom(code);
+      bool exists = roomData != null;
+      
+      _setLoading(false);
+      return exists;
+    } catch (e) {
       _setLoading(false);
       return false;
     }
-
-    _setLoading(false);
-    return true; // Success: The View should now navigate to /room
   }
 
-  /// 3. Fetch User's History
-  Future<void> fetchRooms() async {
-    _setLoading(true);
-    // TODO: Call RoomService.getRoomsForUser()
-    await Future.delayed(const Duration(seconds: 1));
-    _setLoading(false);
-  }
-
-  // --- HELPER ---
+  // --- INTERNAL HELPERS ---
   void _setLoading(bool value) {
     _isLoading = value;
     notifyListeners();

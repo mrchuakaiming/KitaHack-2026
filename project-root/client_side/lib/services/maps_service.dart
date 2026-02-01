@@ -23,7 +23,7 @@ class MapsService {
   gmaps.PlacesService? _placesService;
 
   /// List of markers for user selection or hidden search
-  List<gmaps.Marker> _markers = [];
+  final List<gmaps.Marker> _markers = [];
 
   /// Marker for AI-recommended place
   gmaps.Marker? _aiMarker;

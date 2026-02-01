@@ -100,7 +100,9 @@ class ParticipantModel {
   void addLivePreference(String? cuisine, String? placeId) {
     if (livePreferences.length >= 3) return;
     if ((cuisine == null || cuisine.isEmpty) &&
-        (placeId == null || placeId.isEmpty)) return;
+        (placeId == null || placeId.isEmpty)) {
+      return;
+    }
 
     livePreferences.add({
       "cuisine": cuisine,
