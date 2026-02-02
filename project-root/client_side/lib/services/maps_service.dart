@@ -8,29 +8,24 @@ import 'package:google_maps/google_maps.dart' as gmaps;
 ///
 /// **Responsibilities:**
 /// - Embed Google Maps in the HTML page.
-/// - Display AI recommendations (single place ID or cuisine type search).
+/// - Display AI recommendations or user search results.
 /// - Allow user to search for restaurants and select them.
 /// - Track markers and allow clicking to open Google Maps web/app.
 ///
-/// **Usage / Flow:**
-/// 1. `initMap(mapElementId)` → initialize map in HTML container.
-/// 2. `showAIRecommendation(...)` → display AI recommendations.
-/// 3. `searchRestaurants(query)` → allow user search for restaurants.
-/// 4. `getPlaceDetails(placeId)` → get coordinates for a place (AI or user selected).
-/// 5. Markers are clickable → open Google Maps in new tab.
+/// **Usage / Flow for UI/ViewModel:**
+/// 1. `initMap(mapElementId)` → initialize map.
+/// 2. `showAIRecommendation(...)` → display AI recommendation.
+/// 3. `searchRestaurants(query)` → return restaurant list for UI to show.
+/// 4. `getPlaceDetails(placeId)` → return coordinates, optional price/cuisine.
+/// 5. Markers are clickable → open Google Maps.
 class MapsService {
   gmaps.GMap? _map;
   gmaps.PlacesService? _placesService;
 
-  /// List of markers for user selection or hidden search
   final List<gmaps.Marker> _markers = [];
-
-  /// Marker for AI-recommended place
   gmaps.Marker? _aiMarker;
 
   /// Initialize Google Map inside the HTML element.
-  ///
-  /// Defaults to Kuala Lumpur if coordinates not provided.
   void initMap(String mapElementId,
       {double lat = 3.1390, double lng = 101.6869, int zoom = 12}) {
     final mapOptions = gmaps.MapOptions()
@@ -41,11 +36,9 @@ class MapsService {
     _placesService = gmaps.PlacesService(_map!);
   }
 
-  /// Show AI recommendation on the embedded map.
+  /// Show AI recommendation on the map.
   ///
-  /// - If `recommendedPlaceId` is provided → show single marker.
-  /// - If only `recommendedCuisine` is provided → perform hidden search globally.
-  /// - Center map accordingly.
+  /// Either `recommendedPlaceId` or `recommendedCuisine` should be provided.
   Future<void> showAIRecommendation({
     String? recommendedPlaceId,
     String? recommendedCuisine,
@@ -53,11 +46,9 @@ class MapsService {
   }) async {
     if (_map == null || _placesService == null) return;
 
-    // Clear previous markers
     _clearMarkers();
 
     if (recommendedPlaceId != null) {
-      // Show single AI marker
       final location = await _getLatLngFromPlaceId(recommendedPlaceId);
       if (location != null) {
         _addMarker(location["lat"]!, location["lng"]!, placeName);
@@ -65,16 +56,13 @@ class MapsService {
         _map!.zoom = 15;
       }
     } else if (recommendedCuisine != null) {
-      // Hidden global search for AI cuisine recommendation
       final results = await _textSearchHidden("$recommendedCuisine restaurant");
-
       for (var result in results) {
         final locParts = result["location"]!.split(",");
         final resLat = double.parse(locParts[0]);
         final resLng = double.parse(locParts[1]);
         _addMarker(resLat, resLng, result["name"]!);
       }
-
       if (results.isNotEmpty) {
         final first = results.first;
         final latLng = first["location"]!.split(",");
@@ -87,30 +75,49 @@ class MapsService {
     }
   }
 
-  /// Perform user-driven search (returns list of restaurant results for selection).
+  /// User search for restaurants
   ///
-  /// Example:
-  /// ```
-  /// final results = await mapsService.searchRestaurants("Italian near me");
-  /// ```
-  Future<List<Map<String, String>>> searchRestaurants(String query) async {
+  /// Returns list of maps with:
+  /// - "name"
+  /// - "placeId"
+  /// - "location" ("lat,lng")
+  /// Optional: priceLevel, cuisineLabels (commented, requires extra API)
+  Future<List<Map<String, dynamic>>> searchRestaurants(String query) async {
     if (_map == null || _placesService == null) return [];
 
     final results = await _textSearchHidden(query);
-    // UI can show this list; user selects one → get Place ID
-    return results;
+
+    // Add optional placeholders for price and cuisine
+    return results.map((r) {
+      return {
+        "name": r["name"],
+        "placeId": r["placeId"],
+        "location": r["location"],
+        // "priceLevel": await getPriceLevel(r["placeId"]), // optional, need extra call
+        // "cuisineLabels": await getCuisineLabels(r["placeId"]), // optional, external API
+      };
+    }).toList();
   }
 
-  /// Get coordinates from a Place ID
-  Future<Map<String, double>?> getPlaceDetails(String placeId) async {
-    return _getLatLngFromPlaceId(placeId);
+  /// Get coordinates and optional details from Place ID
+  Future<Map<String, dynamic>?> getPlaceDetails(String placeId) async {
+    final latLng = await _getLatLngFromPlaceId(placeId);
+    if (latLng == null) return null;
+
+    // Optional: price level or cuisine can be fetched here
+    return {
+      "placeId": placeId,
+      "lat": latLng["lat"],
+      "lng": latLng["lng"],
+      // "priceLevel": await getPriceLevel(placeId), // optional
+      // "cuisineLabels": await getCuisineLabels(placeId), // optional
+    };
   }
 
   /// -----------------------------
-  /// INTERNAL / PRIVATE METHODS
+  /// PRIVATE / INTERNAL
   /// -----------------------------
 
-  /// Add marker to the map
   void _addMarker(double lat, double lng, String title) {
     final position = gmaps.LatLng(lat, lng);
     final marker = gmaps.Marker(gmaps.MarkerOptions()
@@ -127,7 +134,6 @@ class MapsService {
     _markers.add(marker);
   }
 
-  /// Clear all markers (including AI marker)
   void _clearMarkers() {
     for (var marker in _markers) {
       marker.map = null;
@@ -136,10 +142,8 @@ class MapsService {
     _aiMarker?.map = null;
   }
 
-  /// Hidden Text Search using Google Places API
   Future<List<Map<String, String>>> _textSearchHidden(String query) {
     final completer = Completer<List<Map<String, String>>>();
-
     final request = gmaps.TextSearchRequest()
       ..query = query
       ..type = 'restaurant';
@@ -163,8 +167,7 @@ class MapsService {
     return completer.future;
   }
 
-  /// Get latitude/longitude from Place ID
-  Future<Map<String, double>?> _getLatLngFromPlaceId(String placeId) async {
+  Future<Map<String, double>?> _getLatLngFromPlaceId(String placeId) {
     final completer = Completer<Map<String, double>?>();
     final request = gmaps.PlaceDetailsRequest()..placeId = placeId;
 

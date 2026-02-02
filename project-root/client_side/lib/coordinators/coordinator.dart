@@ -2,7 +2,10 @@ import 'package:firebase_auth/firebase_auth.dart';
 import '../services/auth_service.dart';
 import '../services/firestore_service.dart';
 import '../services/analytics_service.dart';
+import '../services/maps_service.dart';
+import '../services/ai_service.dart';
 import '../models/user.dart'; // Update path as needed
+import '../models/participant.dart';
 import 'dart:math';
 import 'package:cloud_firestore/cloud_firestore.dart'; // FieldValue, Timestamp
 
@@ -461,6 +464,261 @@ class Coordinator {
     return updated;
     }
 }
+
+/* ====================================================================
+ * 4. JOIN ROOM
+ * --------------------------------------------------------------------
+ * This section contains:
+ *
+ *   - joinRoom(...) : Fetch room data and emit analytics only
+ *
+ * Design notes:
+ *  - This method performs NO validation.
+ *  - No capacity checks, no permission checks, no navigation.
+ *  - ViewModel is responsible for deciding the user flow.
+ *  - Analytics is always fired, even if the room does not exist.
+ * ==================================================================== */
+
+  /// Fetches room data from Firestore and logs a join attempt.
+  ///
+  /// INPUT
+  ///  - roomId (String, required)
+  ///  - uid    (String, required)
+  ///
+  /// OUTPUT
+  ///  - Returns Map<String, dynamic>? (raw room data or null)
+  ///
+  /// RESPONSIBILITY
+  ///  - Data fetch + analytics ONLY
+  ///  - No checks, no side effects
+  Future<Map<String, dynamic>?> joinRoom({
+    required String roomId,
+    required String uid,
+  }) async {
+    // 1. Fetch room data
+    final roomData = await _db.getRoom(roomId);
+
+    // 2. Log analytics (non-fatal)
+    try {
+      await _analytics.logEvent(
+        'join_room_attempt',
+        params: {
+          'room_id': roomId,
+          'user_id': uid,
+          'room_exists': roomData != null,
+        },
+      );
+    } catch (_) {/* non-fatal */}
+
+    // 3. Return raw room data
+    return roomData;
+  }
+
+
+/* ====================================================================
+ * 5. PARTICIPANT PREFERENCES
+ * --------------------------------------------------------------------
+ * This section contains:
+ *
+ *   - searchRestaurant(query) : Fetch restaurant search results from MapsService for UI display
+ *   - submitPreference(...)    : Save user's live preferences to Firestore under the room
+ *
+ * Design notes:
+ *  - searchRestaurant() only returns a list of results; UI is responsible for displaying them.
+ *  - submitPreference() does NOT perform any validation on budget or preference count.
+ *  - ViewModel is responsible for calling these methods at the appropriate time.
+ * ==================================================================== */
+
+/// -----------------------------
+/// Search Restaurant
+///
+/// - Calls MapsService.searchRestaurants(query)
+/// - Returns a list of restaurant maps:
+///   { "name", "placeId", "location" }
+/// - UI should display results and let the user select one
+Future<List<Map<String, dynamic>>> searchRestaurant(String query) async {
+  if (query.isEmpty) return [];
+
+  final results = await mapsService.searchRestaurants(query);
+
+  // Optionally sort, filter, or limit results before returning
+  return results;
+}
+
+/// -----------------------------
+/// Submit Preference
+///
+/// - Collects live preferences from ParticipantModel
+/// - Fetches user default preferences and dietary restrictions from Firestore
+/// - Converts everything into ParticipantModel and updates Firestore room data
+/// - Returns true if success, false otherwise
+Future<bool> submitPreference({
+  required String uid,
+  required String roomId,
+  required ParticipantModel participant,
+}) async {
+  try {
+    // Get latest user data for default preferences & dietary restrictions
+    final user = await firestoreService.getUser(uid);
+
+    final updatedParticipant = ParticipantModel(
+      livePreferences: participant.livePreferences,
+      defaultPreferences: user?.preferredCuisine ?? [],
+      budget: participant.budget,
+      dietaryRestrictions: user?.dietaryRestrictions ?? [],
+    );
+
+    // Update participant data under the room in Firestore
+    await firestoreService.updateRoom(roomId, {
+      'participants.$uid': updatedParticipant.toJson(),
+    });
+
+    return true;
+  } catch (e) {
+    print("Error submitting preferences: $e");
+    return false;
+  }
+}
+
+
+
+
+
+
+
+
+/* ====================================================================
+ * 7. RECOMMENDATION
+ * --------------------------------------------------------------------
+ * This section contains:
+ *
+ *   - generateRecommendation(...) : Calls AIService once and returns result
+ *   - storeRecommendation(...)    : Stores AI result into Firestore Room document
+ *   - wantResult(...)             : Updates done_users and triggers UI updates
+ *   - showResultMap(...)          : Helper to show Google Map with recommended place
+ *
+ * Design notes:
+ *  - AIService is called exactly once per recommendation generation.
+ *  - FirestoreService handles Room and User updates.
+ *  - MapsService used optionally to fetch place details for UI.
+ * ==================================================================== */
+
+/// -----------------------------
+/// generateRecommendation
+///
+/// Calls AIService exactly once with participants and returns a user-friendly recommendation.
+/// Optionally fetches place details via MapsService.
+Future<Map<String, dynamic>> generateRecommendation({
+  required List<ParticipantModel> participants,
+  required AIService aiService,
+  MapsService? mapsService, // optional for UI details
+}) async {
+  // Call AIService once
+  final aiResponse = await aiService.sendParticipantsData(participants: participants);
+
+  // Handle server failure
+  if (aiResponse["status"] != "success") {
+    return {
+      "recommended": null,
+      "budget": null,
+      "justification": aiResponse["message"] ?? "Request failed",
+    };
+  }
+
+  final recommendedPlaceId = aiResponse["recommended_place_id"];
+  final recommendedCuisine = aiResponse["recommended_cuisine"];
+  final reasoning = aiResponse["reasoning"] ?? "";
+
+  dynamic recommended;
+
+  // If MapsService provided, fetch full place details
+  if (recommendedPlaceId != null && mapsService != null) {
+    final placeDetails = await mapsService.getPlaceDetails(recommendedPlaceId);
+    recommended = placeDetails ?? recommendedPlaceId;
+  } else if (recommendedCuisine != null) {
+    recommended = recommendedCuisine;
+  } else {
+    recommended = null;
+  }
+
+  return {
+    "recommended": recommended,
+    "budget": null, // optionally extend if server returns budget
+    "justification": reasoning,
+  };
+}
+
+/// -----------------------------
+/// storeRecommendation
+///
+/// Stores the AI recommendation into the Room document in Firestore.
+/// - roomId: ID of the current room
+/// - result: recommendation from generateRecommendation(...)
+/// Returns status string ("success" or error message)
+Future<String> storeRecommendation({
+  required String roomId,
+  required Map<String, dynamic> result,
+  required FirestoreService firestore,
+}) async {
+  try {
+    await firestore.updateRoom(roomId, {
+      "aiRecommendation": result,
+      "aiStatus": "done",
+    });
+    return "success";
+  } catch (e) {
+    return "Failed to store recommendation: $e";
+  }
+}
+
+/// -----------------------------
+/// wantResult
+///
+/// Updates `done_users` in the Room document and triggers UI updates.
+/// Only shows result for users who have completed their selection.
+Future<void> wantResult({
+  required String roomId,
+  required List<String> doneUsers,
+  required FirestoreService firestore,
+}) async {
+  // Update done_users in Room document
+  await firestore.updateRoom(roomId, {
+    "done_users": doneUsers,
+  });
+
+  // Optionally, the UI layer should listen to this Room document and
+  // show results for each done user in real-time via roomStream()
+}
+
+/// -----------------------------
+/// showResultMap
+///
+/// Helper function to display Google Map with recommended place
+/// - mapService: initialized MapsService instance
+/// - recommendation: output from generateRecommendation()
+/// If recommendation contains placeId, it will show the marker and center map.
+Future<void> showResultMap({
+  required MapsService mapService,
+  required dynamic recommendation,
+}) async {
+  if (recommendation == null) return;
+
+  if (recommendation is Map<String, dynamic> &&
+      recommendation.containsKey("placeId")) {
+    final placeId = recommendation["placeId"] as String?;
+    if (placeId != null) {
+      final details = await mapService.getPlaceDetails(placeId);
+      if (details != null) {
+        mapService.initMap("map"); // ensure map is initialized with correct element ID
+        mapService.showAIRecommendation(
+          recommendedPlaceId: placeId,
+          placeName: details["name"] ?? "Recommended Place",
+        );
+      }
+    }
+  }
+}
+
 
 /* ====================================================================
  * 8. UPDATE PROFILE

@@ -1,16 +1,12 @@
-<<<<<<< Updated upstream
-=======
-///Need to change
-library;
->>>>>>> Stashed changes
 import 'dart:convert';
 import 'package:http/http.dart' as http;
-import 'participant_model.dart'; // Make sure this path points to your ParticipantModel
+import '../models/participant.dart';
 
 /// AIService
 ///
 /// Client-side transport layer only.
 /// Sends aggregated participant data to server.
+/// The server internally calls our_model() to generate the AI recommendation.
 class AIService {
   final String serverBaseUrl;
 
@@ -19,10 +15,11 @@ class AIService {
   /// Sends aggregated participant preferences to the server
   ///
   /// Accepts a list of ParticipantModel and converts to JSON internally.
+  /// Server will run our_model() and return recommendation + justification.
   Future<Map<String, String>> sendParticipantsData({
     required List<ParticipantModel> participants,
   }) async {
-    final url = Uri.parse('$serverBaseUrl/ai/participants'); // Single server endpoint
+    final url = Uri.parse('$serverBaseUrl/ai/participants'); // Calls server endpoint only
 
     // Convert ParticipantModel list to JSON
     final participantsPayload =
@@ -62,4 +59,3 @@ class AIService {
     }
   }
 }
-

@@ -1,10 +1,7 @@
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional,List
 import os
 import json
 from google.genai import genai, types
-
-from typing import Any, Dict, List
-import json
 
 # Assume MapsService exists and is imported
 # from maps_service import MapsService
@@ -112,75 +109,6 @@ def data_converter(room_data: Dict[str, Any], maps_service) -> Dict[str, Any]:
         "total_users": len(participants),
     }
 
-
-def our_model(data: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Core AI decision logic.
-
-    Called by:
-        route → data_converter → our_model
-
-    Args:
-        data: output from data_converter
-
-    Returns:
-        {
-            "status": "success" | "error",
-            "recommended_place_id": str | None,
-            "recommended_cuisine": str | None,
-            "reasoning": str
-        }
-    """
-# Prepare payload for AI from pre-processed data
-    ai_payload = {
-        "group_preferences": data.get("cuisine_counts", {}),
-        "restaurants": data.get("places", []),  # Already enriched by data_converter
-        "budget_range": {
-            "min": min(data.get("min_budgets", [])) if data.get("min_budgets") else None,
-            "max": max(data.get("max_budgets", [])) if data.get("max_budgets") else None,
-        },
-        "dietary_restrictions": list(data.get("dietary_counts", {}).keys()),
-        "total_users": data.get("total_users", 0),
-    }
-
-    # Generate AI prompt using structured payload
-    prompt = generate_prompt_for_ai(ai_payload)
-
-    try:
-        # Initialize Gemini AI client using API key from environment
-        client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
-
-        # Call AI model to generate recommendation
-        response = client.models.generate_content(
-            model="gemini-3-flash-preview",
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                response_mime_type="application/json",
-                temperature=0.2,  # low randomness for consistent results
-            ),
-        )
-
-        # Parse JSON response from AI
-        result = json.loads(response.text)
-
-        # Return structured AI recommendation
-        return {
-            "status": "success",
-            "recommended_place_id": result.get("recommended_place_id"),
-            "recommended_cuisine": result.get("recommended_cuisine"),
-            "reasoning": result.get("reasoning", ""),
-        }
-
-    except Exception as e:
-        # Handle AI errors gracefully
-        return {
-            "status": "error",
-            "recommended_place_id": None,
-            "recommended_cuisine": None,
-            "reasoning": f"AI failure: {str(e)}",
-        }
-
-
 def generate_prompt_for_ai(data: Dict[str, Any]) -> str:
     """
     Generate structured prompt for Gemini AI.
@@ -189,7 +117,7 @@ def generate_prompt_for_ai(data: Dict[str, Any]) -> str:
         data: {
             "group_preferences": {cuisine: count, ...},
             "restaurants": [full place dicts, ...],
-            "budget_range": {"min": int | None, "max": int | None},
+            "budget_range": {"min": list[int], "max": list[int]},
             "dietary_restrictions": [str, ...],
             "total_users": int,
         }
@@ -197,7 +125,6 @@ def generate_prompt_for_ai(data: Dict[str, Any]) -> str:
     Returns:
         str: prompt string
     """
-
     return f"""
 You are an AI decision engine for a group dining application.
 
@@ -216,12 +143,20 @@ RESTAURANT OPTIONS:
 TASK:
 - Recommend ONE best restaurant or cuisine type.
 - Respect dietary restrictions strictly (Priotise this!!!).
-- Chose the only one cuisine type or restaurant that maximizes group satisfaction. 
+- Choose the only one cuisine type or restaurant that maximises group satisfaction. 
 (Do not only recommend restaurant if a cuisine type can satisfy more users.)
 - Only return the place id if recommending a specific restaurant. !!!Do not return a different place id!!!
 - If recommending a cuisine type, return null for place id.
 - If there is a restaurant that satisfies the most of the cuisines choices and dietary restrictions, recommend that restaurant.
 - Ensure budget compatibility where possible.
+- Generate a convincing and reasonable justification for the recommendation.
+- Keep it concise, max 2 sentences.
+- Explain why this restaurant or cuisine satisfies the group's preferences, dietary restrictions, and budget.
+- **Edge case rule**: If there are no cuisine preferences and no dietary restrictions (even if budget exists), leave "recommended_place_id" and "recommended_cuisine" as null!!!  
+  In this case, return a !!!polite!!!, !!!humorous!!! message in the reasoning, 
+  e.g., "Hmm... What an interesting guessing game!", "It seems like you didn't choose anything, I’m going to have to improvise!", or "Are you kidding me? Let’s eat something fun!".  
+  !!Do not use the yellow face emojis!!!
+- Respond in STRICT JSON format as shown below.
 
 RESPONSE (STRICT JSON):
 {{
@@ -232,95 +167,108 @@ RESPONSE (STRICT JSON):
 """
 
 
-def generate_prompt_for_user(
-    ai_result: Dict[str, Any],
-    restaurants: Optional[list],
-) -> Dict[str, Any]:
+def generate_prompt_for_user(reasoning_sentence: str) -> str:
     """
-    Convert AI result into a user-friendly dictionary.
+    Enhance AI's reasoning into a lively, convincing justification.
+
     Args:
-        ai_result: output from our_model
-        restaurants: list of full restaurant dicts from data_converter
+        reasoning_sentence: short reasoning from AI output
+
     Returns:
-        {
-            "recommended": dict | str,  # full restaurant dict or cuisine type
-            "budget": dict | None,      # min/max if available
-            "justification": str
-        }
+        str: user-friendly justification (can include emojis or kaomojis)
     """
+    try:
+        client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
-    if ai_result.get("status") != "success":
-        return {
-            "recommended": None,
-            "budget": None,
-            "justification": "We couldn’t reach a group decision this time. Please try again."
-        }
+        prompt = f"""
+You are a friendly, expressive assistant for a group dining app.  
+Take the following sentence and rewrite it so that it is more lively, convincing, and user-friendly.  
+Feel free to add emojis, kaomojis, or expressive language. Keep it concise (max 2 sentences).  
+Make it polite, fun, and relatable to the users.  
 
-    # Extract AI recommendation details
-    recommended_place_id = ai_result.get("recommended_place_id")
-    recommended_cuisine = ai_result.get("recommended_cuisine")
-    reasoning = ai_result.get("reasoning", "")
+Original sentence: "{reasoning_sentence}"
+"""
 
-    recommended = None
-    budget = None
-
-    if recommended_place_id and restaurants:
-        # Find the full restaurant dictionary matching the recommended ID
-        recommended = next(
-            (r for r in restaurants if r.get("place_id") == recommended_place_id),
-            None
+        response = client.models.generate_content(
+            model="gemini-3-flash-preview",
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                response_mime_type="text/plain",
+                temperature=0.5,
+            ),
         )
-        if recommended:
-            # Extract min/max budget for display
-            budget = {
-                "min": recommended.get("price_level_min"),
-                "max": recommended.get("price_level_max")
-            }
-    elif recommended_cuisine:
-        # If no specific place, recommend a cuisine type
-        recommended = recommended_cuisine
-        budget = None
 
-    # Return user-friendly recommendation
-    return {
-        "recommended": recommended,
-        "budget": budget,
-        "justification": reasoning
-    }
+        return response.text.strip()
+    except Exception as e:
+        # Fallback: return original reasoning if AI fails
+        return reasoning_sentence
 
-def generate_recommendation(room_data: Dict[str, Any], maps_service) -> Dict[str, Any]:
+def our_model(room_data: Dict[str, Any], maps_service) -> Dict[str, Any]:
     """
-    Orchestrates the full process of generating a group dining recommendation.
+    Core AI decision logic.
 
-    Steps:
-    1. Convert raw client data into AI-readable structure (data_converter)
-    2. Call AI model to get recommendation (our_model)
-    3. Format AI result into user-friendly output (generate_prompt_for_user)
+    Called by client-side only:
+        client → ai_service → our_model
 
     Args:
-        room_data: Raw room data sent by client
+        room_data: Raw participant data from client
         maps_service: Instance of MapsService to fetch place details
 
     Returns:
-        Dict with user-friendly recommendation:
         {
-            "recommended": dict | str | None,  # full restaurant dict or cuisine type
-            "budget": dict | None,              # min/max if available
+            "status": "success" | "error",
+            "recommended_place_id": str | None,
+            "recommended_cuisine": str | None,
             "justification": str
         }
     """
+    try:
+        # Convert raw room data into AI-readable structure
+        converted_data = data_converter(room_data, maps_service)
 
-    #Convert client data into structured AI input
-    converted_data = data_converter(room_data, maps_service)
+        # Prepare AI payload
+        ai_payload = {
+            "group_preferences": converted_data.get("cuisine_counts", {}),
+            "restaurants": converted_data.get("places", []),
+            "budget_range": {
+                "min": converted_data.get("min_budgets", []),
+                "max": converted_data.get("max_budgets", []),
+            },
+            "dietary_restrictions": list(converted_data.get("dietary_counts", {}).keys()),
+            "total_users": converted_data.get("total_users", 0),
+        }
 
-    #Get AI recommendation based on converted data
-    ai_result = our_model(converted_data)
+        # Generate AI prompt
+        prompt = generate_prompt_for_ai(ai_payload)
 
-    #Generate user-friendly recommendation
-    user_friendly_result = generate_prompt_for_user(
-        ai_result=ai_result,
-        restaurants=converted_data.get("places", []),
-        total_users=converted_data.get("total_users", 0)
-    )
+        # Call Gemini AI
+        client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+        response = client.models.generate_content(
+            model="gemini-3-flash-preview",
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+                temperature=0.2,
+            ),
+        )
 
-    return user_friendly_result
+        # Parse AI response
+        result = json.loads(response.text)
+
+        # Enhance justification sentence
+        justification = generate_prompt_for_user(result.get("reasoning", ""))
+
+        return {
+            "status": "success",
+            "recommended_place_id": result.get("recommended_place_id"),
+            "recommended_cuisine": result.get("recommended_cuisine"),
+            "justification": justification,
+        }
+
+    except Exception as e:
+        return {
+            "status": "error",
+            "recommended_place_id": None,
+            "recommended_cuisine": None,
+            "justification": f"AI failure: {str(e)}",
+        }
