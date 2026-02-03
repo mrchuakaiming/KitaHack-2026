@@ -1,0 +1,33 @@
+# =========================
+# Web framework
+# =========================
+fastapi
+uvicorn[standard]
+
+# =========================
+# Environment variables
+# =========================
+python-dotenv
+
+# =========================
+# Google APIs
+# =========================
+google-generativeai
+googlemaps
+google-api-core
+
+# =========================
+# Firebase
+# =========================
+firebase-admin
+
+# =========================
+# HTTP requests
+# =========================
+requests
+
+# =========================
+# Testing
+# =========================
+pytest
+pytest-anyio

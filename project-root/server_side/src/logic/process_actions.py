@@ -1,9 +1,9 @@
 from typing import Any, Dict,List
-import os,json, requests
+import os,json
 from google.genai import genai, types
 import firebase_admin
 from firebase_admin import credentials, firestore
-from server_side.config import FIREBASE_ADMIN_KEY_PATH, GEMINI_API_KEY, MAPS_API_KEY
+from server_side.src.config import FIREBASE_ADMIN_KEY_PATH, GEMINI_API_KEY, MAPS_API_KEY
 from server_side.src.utils.maps_service import MapsService
 
 # -----------------------------------

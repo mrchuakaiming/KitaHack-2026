@@ -2,7 +2,7 @@ from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 # Server-side logic
-from server_side.process_actions import our_model, maps_service_instance
+from server_side.src.logic.process_actions import our_model, maps_service_instance
 
 app = FastAPI(title="Group Dining AI Server")
 
