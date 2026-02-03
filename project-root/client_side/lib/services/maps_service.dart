@@ -1,31 +1,60 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:html';
+import 'package:http/http.dart' as http;
 import 'package:google_maps/google_maps.dart' as gmaps;
 
 /// MapsService
 ///
-/// Handles all Google Maps functionality for the client-side web app.
+/// Handles all Google Maps functionality for the client-side web app (UI).
+/// This service **does not contain any API keys**, the server handles AI recommendations securely.
 ///
-/// **Responsibilities:**
-/// - Embed Google Maps in the HTML page.
-/// - Display AI recommendations or user search results.
-/// - Allow user to search for restaurants and select them.
-/// - Track markers and allow clicking to open Google Maps web/app.
+/// ----------------------------
+/// USAGE / FUNCTION GUIDE
+/// ----------------------------
+/// 1. Initialize the map on page load:
+///    `initMap(mapElementId)`
 ///
-/// **Usage / Flow for UI/ViewModel:**
-/// 1. `initMap(mapElementId)` → initialize map.
-/// 2. `showAIRecommendation(...)` → display AI recommendation.
-/// 3. `searchRestaurants(query)` → return restaurant list for UI to show.
-/// 4. `getPlaceDetails(placeId)` → return coordinates, optional price/cuisine.
-/// 5. Markers are clickable → open Google Maps.
+/// 2. User searches for restaurants (directly on the map):
+///    `searchRestaurants(query)`
+///    - Uses Google Maps JS SDK
+///    - Returns a list of { name, placeId, location }
+///    - **Called when user types a search query in UI**
+///
+/// 3. Show AI recommendation:
+///    `showAIRecommendation(recommendedPlaceId: "xyz")`
+///    - Fetches full place details from the server using placeId
+///    - Adds a marker to the map and centers it
+///    - **Called when AI sends back recommendedPlaceId**
+///
+/// 4. Get full place details from server (internal for AI recommendation):
+///    `getPlaceDetailsFromServer(placeId)`
+///    - Calls server endpoint `/maps/place/{placeId}`
+///    - Returns lat/lng and optional name
+///    - **Called automatically inside showAIRecommendation**
+///
+/// ----------------------------
+/// NOTES
+/// ----------------------------
+/// - User searches should **always use `searchRestaurants`** (client-side, instant results)
+/// - AI recommendations should **always call `showAIRecommendation`**
+///   to fetch secure data from server (server has API key)
+/// - No server calls for normal user searches, all displayed directly in the map
+/// - Markers are clickable, open Google Maps in new tab
+
 class MapsService {
   gmaps.GMap? _map;
   gmaps.PlacesService? _placesService;
-
   final List<gmaps.Marker> _markers = [];
   gmaps.Marker? _aiMarker;
 
-  /// Initialize Google Map inside the HTML element.
+  final String serverBaseUrl; // e.g., "https://your-server.com"
+
+  MapsService({required this.serverBaseUrl});
+
+  /// ----------------------------
+  /// MAP INITIALIZATION (UI)
+  /// ----------------------------
   void initMap(String mapElementId,
       {double lat = 3.1390, double lng = 101.6869, int zoom = 12}) {
     final mapOptions = gmaps.MapOptions()
@@ -36,114 +65,13 @@ class MapsService {
     _placesService = gmaps.PlacesService(_map!);
   }
 
-  /// Show AI recommendation on the map.
-  ///
-  /// Either `recommendedPlaceId` or `recommendedCuisine` should be provided.
-  Future<void> showAIRecommendation({
-    String? recommendedPlaceId,
-    String? recommendedCuisine,
-    String placeName = "AI Recommendation",
-  }) async {
-    if (_map == null || _placesService == null) return;
-
-    _clearMarkers();
-
-    if (recommendedPlaceId != null) {
-      final location = await _getLatLngFromPlaceId(recommendedPlaceId);
-      if (location != null) {
-        _addMarker(location["lat"]!, location["lng"]!, placeName);
-        _map!.center = gmaps.LatLng(location["lat"]!, location["lng"]!);
-        _map!.zoom = 15;
-      }
-    } else if (recommendedCuisine != null) {
-      final results = await _textSearchHidden("$recommendedCuisine restaurant");
-      for (var result in results) {
-        final locParts = result["location"]!.split(",");
-        final resLat = double.parse(locParts[0]);
-        final resLng = double.parse(locParts[1]);
-        _addMarker(resLat, resLng, result["name"]!);
-      }
-      if (results.isNotEmpty) {
-        final first = results.first;
-        final latLng = first["location"]!.split(",");
-        _map!.center = gmaps.LatLng(
-          double.parse(latLng[0]),
-          double.parse(latLng[1]),
-        );
-        _map!.zoom = 13;
-      }
-    }
-  }
-
-  /// User search for restaurants
-  ///
-  /// Returns list of maps with:
-  /// - "name"
-  /// - "placeId"
-  /// - "location" ("lat,lng")
-  /// Optional: priceLevel, cuisineLabels (commented, requires extra API)
+  /// ----------------------------
+  /// CLIENT-SIDE SEARCH FOR USER (Google Maps JS SDK)
+  /// ----------------------------
   Future<List<Map<String, dynamic>>> searchRestaurants(String query) async {
-    if (_map == null || _placesService == null) return [];
+    if (_placesService == null) return [];
 
-    final results = await _textSearchHidden(query);
-
-    // Add optional placeholders for price and cuisine
-    return results.map((r) {
-      return {
-        "name": r["name"],
-        "placeId": r["placeId"],
-        "location": r["location"],
-        // "priceLevel": await getPriceLevel(r["placeId"]), // optional, need extra call
-        // "cuisineLabels": await getCuisineLabels(r["placeId"]), // optional, external API
-      };
-    }).toList();
-  }
-
-  /// Get coordinates and optional details from Place ID
-  Future<Map<String, dynamic>?> getPlaceDetails(String placeId) async {
-    final latLng = await _getLatLngFromPlaceId(placeId);
-    if (latLng == null) return null;
-
-    // Optional: price level or cuisine can be fetched here
-    return {
-      "placeId": placeId,
-      "lat": latLng["lat"],
-      "lng": latLng["lng"],
-      // "priceLevel": await getPriceLevel(placeId), // optional
-      // "cuisineLabels": await getCuisineLabels(placeId), // optional
-    };
-  }
-
-  /// -----------------------------
-  /// PRIVATE / INTERNAL
-  /// -----------------------------
-
-  void _addMarker(double lat, double lng, String title) {
-    final position = gmaps.LatLng(lat, lng);
-    final marker = gmaps.Marker(gmaps.MarkerOptions()
-      ..position = position
-      ..map = _map
-      ..title = title
-      ..clickable = true);
-
-    marker.onClick.listen((_) {
-      final url = "https://www.google.com/maps/search/?api=1&query=$lat,$lng";
-      window.open(url, "_blank");
-    });
-
-    _markers.add(marker);
-  }
-
-  void _clearMarkers() {
-    for (var marker in _markers) {
-      marker.map = null;
-    }
-    _markers.clear();
-    _aiMarker?.map = null;
-  }
-
-  Future<List<Map<String, String>>> _textSearchHidden(String query) {
-    final completer = Completer<List<Map<String, String>>>();
+    final completer = Completer<List<Map<String, dynamic>>>();
     final request = gmaps.TextSearchRequest()
       ..query = query
       ..type = 'restaurant';
@@ -167,20 +95,73 @@ class MapsService {
     return completer.future;
   }
 
-  Future<Map<String, double>?> _getLatLngFromPlaceId(String placeId) {
-    final completer = Completer<Map<String, double>?>();
-    final request = gmaps.PlaceDetailsRequest()..placeId = placeId;
+  /// ----------------------------
+  /// SHOW AI RECOMMENDATION (SERVER-SIDE)
+  /// ----------------------------
+  Future<void> showAIRecommendation({
+    String? recommendedPlaceId,
+    String placeName = "AI Recommendation",
+  }) async {
+    if (_map == null) return;
+    _clearMarkers();
 
-    _placesService!.getDetails(request, (place, status) {
-      if (status == gmaps.PlacesServiceStatus.OK && place != null) {
-        final lat = place.geometry?.location?.lat ?? 0.0;
-        final lng = place.geometry?.location?.lng ?? 0.0;
-        completer.complete({"lat": lat, "lng": lng});
-      } else {
-        completer.complete(null);
+    if (recommendedPlaceId != null) {
+      // Get full details from server (lat/lng, name)
+      final location = await getPlaceDetailsFromServer(recommendedPlaceId);
+      if (location != null) {
+        _addMarker(location["lat"], location["lng"], location["name"] ?? placeName);
+        _map!.center = gmaps.LatLng(location["lat"], location["lng"]);
+        _map!.zoom = 15;
       }
+    }
+  }
+
+  /// ----------------------------
+  /// SERVER-SIDE API CALL
+  /// ----------------------------
+  Future<Map<String, dynamic>?> getPlaceDetailsFromServer(String placeId) async {
+    try {
+      final url = Uri.parse("$serverBaseUrl/maps/place/$placeId");
+      final response = await http.get(url);
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        return {
+          "lat": data["lat"],
+          "lng": data["lng"],
+          "name": data["name"] ?? "",
+        };
+      }
+    } catch (e) {
+      print("[ERROR] getPlaceDetailsFromServer failed: $e");
+    }
+    return null;
+  }
+
+  /// ----------------------------
+  /// PRIVATE UI FUNCTIONS
+  /// ----------------------------
+  void _addMarker(double lat, double lng, String title) {
+    final position = gmaps.LatLng(lat, lng);
+    final marker = gmaps.Marker(gmaps.MarkerOptions()
+      ..position = position
+      ..map = _map
+      ..title = title
+      ..clickable = true);
+
+    marker.onClick.listen((_) {
+      final url = "https://www.google.com/maps/search/?api=1&query=$lat,$lng";
+      window.open(url, "_blank");
     });
 
-    return completer.future;
+    _markers.add(marker);
+  }
+
+  void _clearMarkers() {
+    for (var marker in _markers) {
+      marker.map = null;
+    }
+    _markers.clear();
+    _aiMarker?.map = null;
   }
 }

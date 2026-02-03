@@ -1,11 +1,43 @@
-from typing import Any, Dict, Optional,List
-import os
-import json
+from typing import Any, Dict,List
+import os,json, requests
 from google.genai import genai, types
+import firebase_admin
+from firebase_admin import credentials, firestore
+from server_side.config import FIREBASE_ADMIN_KEY_PATH, GEMINI_API_KEY, MAPS_API_KEY
+from server_side.src.utils.maps_service import MapsService
 
-# Assume MapsService exists and is imported
-# from maps_service import MapsService
+# -----------------------------------
+# API INITIALIZATION
+# -----------------------------------
+# Firebase Admin SDK
+if not firebase_admin._apps:
+    cred = credentials.Certificate(FIREBASE_ADMIN_KEY_PATH)
+    firebase_admin.initialize_app(cred)
+db = firestore.client()
 
+# Gemini AI client (can be re-initialized in functions if needed)
+gemini_client = genai.Client(api_key=GEMINI_API_KEY)
+
+# MapsService instance for server-side Google Maps calls
+maps_service_instance = MapsService()
+
+# -----------------------------------
+# FUNCTION GUIDE / WHEN TO CALL
+# -----------------------------------
+# 1. data_converter(room_data, maps_service_instance)
+#    - Convert raw client participant data to structured format for AI
+#    - Fetch place details using MapsService
+# 2. generate_prompt_for_ai(ai_payload)
+#    - Prepare prompt for Gemini AI
+# 3. generate_prompt_for_user(reasoning_sentence)
+#    - Enhance AI reasoning for user-friendly message
+# 4. our_model(room_data, maps_service_instance)
+#    - Main function called by client-side AIService
+#    - Returns {"status", "recommended_place_id", "recommended_cuisine", "justification"}
+
+# -----------------------------------
+# DATA CONVERSION AND AI LOGIC
+# -----------------------------------
 def data_converter(room_data: Dict[str, Any], maps_service) -> Dict[str, Any]:
     """
     Convert client-sent (host) room data into AI-readable structure.
@@ -242,8 +274,7 @@ def our_model(room_data: Dict[str, Any], maps_service) -> Dict[str, Any]:
         prompt = generate_prompt_for_ai(ai_payload)
 
         # Call Gemini AI
-        client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
-        response = client.models.generate_content(
+        response = gemini_client.models.generate_content(
             model="gemini-3-flash-preview",
             contents=prompt,
             config=types.GenerateContentConfig(

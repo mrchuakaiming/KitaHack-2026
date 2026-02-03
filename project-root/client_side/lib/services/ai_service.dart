@@ -10,7 +10,7 @@ import '../models/participant.dart';
 class AIService {
   final String serverBaseUrl;
 
-  AIService({required this.serverBaseUrl}); // Set to your server URL
+  AIService({required this.serverBaseUrl}); // Set to your server URL ##change##
 
   /// Sends aggregated participant preferences to the server
   ///
