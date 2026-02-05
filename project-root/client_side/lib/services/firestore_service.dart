@@ -175,4 +175,40 @@ class FirestoreService {
         .map((snapshot) => snapshot.docs.map((d) => d.data()).toList());
   } 
 }
+
+/* ----------------------------- PREFERENCES ------------------------------ */
+
+CollectionReference<Map<String, dynamic>> get _preferencesCol =>
+    _db.collection('preferences');
+
+DocumentReference<Map<String, dynamic>> _preferenceDoc(String roomId, String uid) =>
+    _preferencesCol.doc('${roomId}_$uid');
+
+/// Create or update a preferences document for a user in a room
+Future<void> setPreferences({
+  required String roomId,
+  required String uid,
+  required Map<String, dynamic> data,
+}) async {
+  await _preferenceDoc(roomId, uid).set(data, SetOptions(merge: true));
+}
+
+/// Fetch preferences for a user in a room
+Future<Map<String, dynamic>?> getPreferences({
+  required String roomId,
+  required String uid,
+}) async {
+  final snap = await _preferenceDoc(roomId, uid).get();
+  if (!snap.exists) return null;
+  return snap.data();
+}
+
+/// Fetch all preferences for a room
+Future<List<Map<String, dynamic>>> getAllPreferencesForRoom(String roomId) async {
+  final query = await _preferencesCol
+      .where('room_id', isEqualTo: roomId)
+      .get();
+
+  return query.docs.map((d) => d.data()).toList();
+}
 ``

@@ -4,8 +4,9 @@ import '../services/firestore_service.dart';
 import '../services/analytics_service.dart';
 import '../services/maps_service.dart';
 import '../services/ai_service.dart';
+import '../services/rtdb_services.dart';
 import '../models/user.dart'; // Update path as needed
-import '../models/participant.dart';
+import '../models/preferences.dart';
 import 'dart:math';
 import 'package:cloud_firestore/cloud_firestore.dart'; // FieldValue, Timestamp
 
@@ -548,7 +549,7 @@ Future<List<Map<String, dynamic>>> searchRestaurant(String query) async {
   final trimmedQuery = query.trim();
   if (trimmedQuery.isEmpty) return [];
 
-  final results = await mapsService.searchRestaurants(trimmedQuery);
+  final results = await _maps.searchRestaurants(trimmedQuery);
 
   return results;
 }
@@ -558,31 +559,40 @@ Future<List<Map<String, dynamic>>> searchRestaurant(String query) async {
 ///
 /// - Collects live preferences from PreferencesModel
 /// - Fetches user default preferences and dietary restrictions from Firestore
-/// - Converts everything into PreferencesModel and updates Firestore room data
-/// - Returns true if success, false otherwise
+/// - Stores per-user preferences in Firestore `preferences` collection
+/// - Marks participant as submitted in RTDB
+///
+/// Returns true if success, false otherwise
 Future<bool> submitPreference({
   required String uid,
   required String roomId,
-  required PreferencesModel participant,
+  required PreferencesModel preferences,
 }) async {
   try {
-    //Fetch user defaults from Firestore
-    final user = await firestoreService.getUser(uid);
+    //Fetch user defaults
+    final user = await _db.getUser(uid);
 
-    final updatedParticipant = PreferencesModel(
-      livePreferences: participant.livePreferences,
+    //Merge live + default preferences (originally from different table)
+    final mergedPreferences = PreferencesModel(
+      livePreferences: preferences.livePreferences,
       defaultPreferences: user?.preferredCuisine ?? [],
-      budget: participant.budget,
+      budget: preferences.budget,
       dietaryRestrictions: user?.dietaryRestrictions ?? [],
     );
 
-    // Update Firestore room document
-    await firestoreService.updateRoom(roomId, {
-      'participants.$uid': updatedParticipant.toJson(),
-    });
+    //Store preferences (composite key: room + user)
+    await _db.setPreferences(
+      roomId: roomId,
+      uid: uid,
+      data: {
+        'room_id': roomId,
+        'uid': uid,
+        ...mergedPreferences.toJson(),
+      },
+    );
 
-    // Mark participant as submitted in Realtime Database
-    await rtdbService.setParticipantSubmitted(
+    //Mark participant as submitted in RTDB
+    await _rtdb.setParticipantSubmitted(
       roomId: roomId,
       uid: uid,
       submitted: true,
@@ -595,16 +605,8 @@ Future<bool> submitPreference({
   }
 }
 
-
-
-
-
-
-
-
-
 /* ====================================================================
- * 7. RECOMMENDATION
+ * 6. RECOMMENDATION
  * --------------------------------------------------------------------
  * This section contains:
  *
@@ -622,46 +624,25 @@ Future<bool> submitPreference({
 /// -----------------------------
 /// generateRecommendation
 ///
-/// Calls AIService exactly once with participants and returns a user-friendly recommendation.
-/// Optionally fetches place details via MapsService.
+/// - Reads preferences from Firestore
+/// - Sends to AI service
+/// - Does NOT touch RTDB
 Future<Map<String, dynamic>> generateRecommendation({
-  required List<PreferencesModel> participants,
-  required AIService aiService,
-  MapsService? mapsService, // optional for UI details
+  required String roomId,
 }) async {
-  // Call AIService once
-  final aiResponse = await aiService.sendParticipantsData(participants: participants);
+  // Fetch all preferences for the room
+  final prefList = await _db.getAllPreferencesForRoom(roomId);
 
-  // Handle server failure
-  if (aiResponse["status"] != "success") {
-    return {
-      "recommended": null,
-      "budget": null,
-      "justification": aiResponse["message"] ?? "Request failed",
-    };
+  if (prefList.isEmpty) {
+    throw Exception('No preferences submitted for room $roomId');
   }
 
-  final recommendedPlaceId = aiResponse["recommended_place_id"];
-  final recommendedCuisine = aiResponse["recommended_cuisine"];
-  final reasoning = aiResponse["reasoning"] ?? "";
+  // Convert to PreferencesModel list
+  final preferences = prefList.map((p) => PreferencesModel.fromJson(p)).toList();
 
-  dynamic recommended;
-
-  // If MapsService provided, fetch full place details
-  if (recommendedPlaceId != null && mapsService != null) {
-    final placeDetails = await mapsService.getPlaceDetails(recommendedPlaceId);
-    recommended = placeDetails ?? recommendedPlaceId;
-  } else if (recommendedCuisine != null) {
-    recommended = recommendedCuisine;
-  } else {
-    recommended = null;
-  }
-
-  return {
-    "recommended": recommended,
-    "budget": null, // optionally extend if server returns budget
-    "justification": reasoning,
-  };
+  // Call AI service
+  final result = await _ai.generateRecommendation(preferences);
+  return result;
 }
 
 /// -----------------------------
@@ -674,18 +655,16 @@ Future<Map<String, dynamic>> generateRecommendation({
 Future<String> storeRecommendation({
   required String roomId,
   required Map<String, dynamic> result,
-  required FirestoreService firestore,
-  required RTDBService rtdbService,
 }) async {
   try {
     //Store AI recommendation in Firestore
-    await firestore.updateRoom(roomId, {
+    await _db.updateRoom(roomId, {
       "aiRecommendation": result,
       "aiStatus": "done",
     });
 
     //Clean up all participants in RTDB for this room
-    await rtdbService.deleteRoomParticipants(roomId);
+    await _rtdb.deleteRoomParticipants(roomId);
 
     return "success";
   } catch (e) {
@@ -701,7 +680,6 @@ Future<String> storeRecommendation({
 Future<void> wantResult({
   required String roomId,
   required List<String> doneUsers,
-  required FirestoreService firestore,
 }) async {
   try{
     // Update done_users in Room document
@@ -709,39 +687,10 @@ Future<void> wantResult({
       "done_users": doneUsers,
   });
 
-  }catch(e,st){throw Exception('Failed to update done_users: $e\n$st');
+  }catch(e,st){
+    throw Exception('Failed to update done_users: $e\n$st');
   }
 }
-
-/// -----------------------------
-/// showResultMap
-///
-/// Helper function to display Google Map with recommended place
-/// - mapService: initialized MapsService instance
-/// - recommendation: output from generateRecommendation()
-/// If recommendation contains placeId, it will show the marker and center map.
-Future<void> showResultMap({
-  required MapsService mapService,
-  required dynamic recommendation,
-}) async {
-  if (recommendation == null) return;
-
-  if (recommendation is Map<String, dynamic> &&
-      recommendation.containsKey("placeId")) {
-    final placeId = recommendation["placeId"] as String?;
-    if (placeId != null) {
-      final details = await mapService.getPlaceDetails(placeId);
-      if (details != null) {
-        mapService.initMap("map"); // ensure map is initialized with correct element ID
-        mapService.showAIRecommendation(
-          recommendedPlaceId: placeId,
-          placeName: details["name"] ?? "Recommended Place",
-        );
-      }
-    }
-  }
-}
-
 
 /* ====================================================================
  * 8. UPDATE PROFILE
@@ -802,25 +751,11 @@ Future<void> updateProfile({required UserModel updated}) async {
 /// Sends a password reset email to [email].
 Future<void> resetPassword(String email) async {
   try {
-    // Trim email and send password reset email via Firebase Auth
-    await FirebaseAuth.instance.sendPasswordResetEmail(
-      email: email.trim(),
-    );
-  } on FirebaseAuthException catch (e) {
-    // Map Firebase error codes to friendly messages
-    switch (e.code) {
-      case 'user-not-found':
-        throw Exception('No user found with this email.');
-      case 'invalid-email':
-        throw Exception('Invalid email address.');
-      default:
-        throw Exception(e.message ?? 'Failed to reset password.');
+      await _auth.sendPasswordResetEmail(email.trim());
+    } catch (e) {
+      throw Exception('Failed to reset password: $e');
     }
-  } catch (e) {
-    // Catch-all for any unexpected errors
-    throw Exception('Unexpected error occurred: $e');
   }
-}
 
 /* ====================================================================
  * 10. DELETE ACCOUNT
@@ -839,7 +774,7 @@ Future<void> resetPassword(String email) async {
 
 /// Deletes the currently signed-in user's account and all associated Firestore data.
 Future<void> deleteAccount() async {
-  final user = FirebaseAuth.instance.currentUser;
+  final user = _auth._auth.currentUser;
 
   if (user == null) {
     // Ensure there is a signed-in user before attempting deletion
@@ -863,12 +798,11 @@ Future<void> deleteAccount() async {
  * ========================= */
 
 /// Clears all Firestore documents for the given [uid].
+/// Deletes the user document and all rooms hosted by this user.
+/// Preferences will be cleaned up by Cloud Functions periodically.
 Future<void> clearData(String uid) async {
   try {
-    await FirebaseFirestore.instance
-        .collection('users')
-        .doc(uid)
-        .delete(); // Delete user document
+    await _db.deleteUser(uid); // Only delete the user doc
   } catch (e) {
     throw Exception('Failed to clear user data: $e');
   }
@@ -891,3 +825,4 @@ Future<void> removeAcc(User user) async {
     throw Exception('Unexpected error occurred: $e');
   }
 }
+
