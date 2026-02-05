@@ -47,300 +47,371 @@ class Coordinator {
  *  - Analytics is centralized in registerUser to avoid double-logging.
  * ==================================================================== */
 
-/// Which stage of the registration flow failed.
-enum RegisterStage { createUser, updateProfile, logIn, unknown }
 
-/// Structured error the UI can catch and branch on.
-class RegisterFailure implements Exception {
-  final RegisterStage stage;
-  final String code;      // e.g., FirebaseAuthException.code or custom
-  final String message;   // human-friendly detail (safe for logs/UX)
+  /// Structured error the UI can catch and branch on.
+  /// `stage` uses string tags since the enum was removed.
+  class RegisterFailure implements Exception {
+    /// Stage tag: 'createUser' | 'updateProfile' | 'unknown'
+    final String stage;
+    final String code;    // e.g., FirebaseAuthException.code or custom
+    final String message; // human-friendly detail (safe for logs/UX)
 
-  RegisterFailure({
-    required this.stage,
-    required this.code,
-    required this.message,
-  });
+    RegisterFailure({
+      required this.stage,
+      required this.code,
+      required this.message,
+    });
 
-  @override
-  String toString() =>
-      'RegisterFailure(stage: $stage, code: $code, message: $message)';
-}
+    @override
+    String toString() =>
+        'RegisterFailure(stage: $stage, code: $code, message: $message)';
+  }
+
   // ---------------------------- createUser ----------------------------
 
-  /// Creates a Firebase Auth user and seeds a minimal user document.
-  /// - Only `email` is stored (plus blank profile fields); `username` remains '',
-  ///   lists remain `[]`. Profile edits are *not* handled here.
-  ///
-  /// Returns the [UserCredential] on success.
+  /// Creates a Firebase Auth user (Auth-only).
+  /// Returns [UserCredential] on success.
+  /// NOTE: Firebase automatically signs the user in after sign-up.
   Future<UserCredential> createUser({
     required String email,
     required String password,
-    bool logAnalytics = true,
   }) async {
-    // Step 1: Auth sign-up to obtain uid (UserCredential.user!.uid)
-    final userCredential = await _auth.signUp(email, password);
-    // Auth wrapper uses FirebaseAuth.createUserWithEmailAndPassword. 
-    final user = userCredential.user;
-    if (user == null) {
+    final cred = await _auth.signUp(email, password); // FirebaseAuth.createUserWithEmailAndPassword
+    if (cred.user == null) {
       throw StateError('User creation failed: no Firebase user returned.');
-    }
-
-    // Step 2: Seed minimal Firestore doc
-    final model = UserModel(
-      uid: user.uid,
-      username: '',
-      email: email,
-      dietaryRestrictions: const [],
-      preferredCuisine: const [],
-      hostedRooms: const [], // not stored server-side
-    );
-
-    try {
-      await _db.setUser(model); // typed upsert with merge semantics. 
-    } catch (e) {
-      // Compensating action: remove Auth user to avoid dangling account.
-      try { await user.delete(); } catch (_) {}
-      rethrow;
-    }
-
-    if (logAnalytics) {
-      try {
-        await _analytics.setUserId(user.uid);
-        await _analytics.logEvent('sign_up', params: {'method': 'email_password'});
-      } catch (_) {/* non-fatal */}
-    }
-
-    return userCredential;
-  }
-
-  // --------------------------- updateProfile --------------------------
-
-  /// Updates mutable profile fields ONLY: `username`, `dietary_restrictions`,
-  /// `preferred_cuisine`. `uid`/`email` are immutable here.
-  Future<void> updateProfile({required UserModel updated}) async {
-    final fields = <String, dynamic>{
-      'username': updated.username.trim(),
-      'dietary_restrictions': updated.dietaryRestrictions
-          .map((e) => e.trim())
-          .where((e) => e.isNotEmpty)
-          .toList(growable: false),
-      'preferred_cuisine': updated.preferredCuisine
-          .map((e) => e.trim())
-          .where((e) => e.isNotEmpty)
-          .toList(growable: false),
-    };
-
-    await _db.updateUserFields(updated.uid, fields); // partial update. 
-  }
-
-  // ------------------------------ logIn -------------------------------
-
-  /// Logs a user in with email/password and returns [UserCredential].
-  Future<UserCredential> logIn({
-    required String email,
-    required String password,
-    bool logAnalytics = true,
-  }) async {
-    final cred = await _auth.signIn(email, password); // FirebaseAuth.signInWithEmailAndPassword. 
-    if (logAnalytics) {
-      try {
-        final uid = cred.user?.uid;
-        if (uid != null) await _analytics.setUserId(uid);
-        await _analytics.logLogin(method: 'email_password'); // logs a 'login' event. 
-      } catch (_) {/* non-fatal */}
     }
     return cred;
   }
 
+  // --------------------------- updateProfile --------------------------
+
+  /// Overwrite all user fields in Firestore with the provided model.
+  /// WARNING: This replaces the entire document with `updated.toJson()`.
+  /// `uid` and `hostedRooms` are intentionally not stored (see UserModel.toJson()).
+  Future<void> updateProfile({required UserModel updated}) async {
+    await _db.replaceUser(updated); // Full document replacement (no merge)
+  }
+
+  // ------------------------------ getOrCreateUserModel -------------------------------
+
+  /// Ensures a Firestore user doc exists for [uid] and returns a typed UserModel.
+  /// - If users/{uid} exists -> deserialize and return it.
+  /// - If missing -> create a default profile and return it.
+  /// Safe to call right after registration or any normal login.
+  Future<UserModel> getOrCreateUserModel({
+    required String uid,
+    required String email,
+  }) async {
+    // Try reading the user document (typed)
+    final existing = await _db.getUser(uid); // -> UserModel? (or null)
+    if (existing != null) {
+      return existing;
+    }
+
+    // Not found: create a sane default profile and write it via full replace.
+    final fresh = UserModel(
+      uid: uid,
+      username: '',
+      email: email.trim(),
+      dietaryRestrictions: const [],
+      preferredCuisine: const [],
+      hostedRooms: const [], // model-only, not stored
+    );
+
+    // Write the profile (full overwrite; creates the doc if missing)
+    await _db.replaceUser(fresh);
+    return fresh;
+  }
+
+
+  /// Convenience return type for registration.
+  class RegistrationResult {
+    final UserCredential credential; // Firebase Auth credential (user is signed-in)
+    final UserModel user;            // Freshly ensured/loaded Firestore user model
+    RegistrationResult({
+      required this.credential,
+      required this.user,
+    });
+  }
+
   // --------------------------- registerUser ---------------------------
 
-  /// MASTER: Register a user end-to-end in one call.
+  /// Registers a new user end-to-end and returns a fully initialized session.
   ///
-  /// ORDER OF OPERATIONS
-  ///  1) createUser(email, password)           -> Auth + minimal user doc
-  ///  2) updateProfile(updated: UserModel)     -> Optional profile fields
-  ///  3) logIn(email, password)                -> Ensure authenticated
+  /// This method performs **account creation + profile persistence** as a single
+  /// logical operation and guarantees that no partially-created (“ghost”) users
+  /// are left behind.
   ///
-  /// INPUT
-  ///  - email (String, required)
-  ///  - password (String, required)
-  ///  - username (String?, optional)
-  ///  - dietaryRestrictions (List<String>?, optional)
-  ///  - preferredCuisine (List<String>?, optional)
+  /// ---------------------------------------------------------------------------
+  /// FLOW (STRICT ORDER)
+  /// 1) createUser
+  ///    - Creates a Firebase Auth account using email/password
+  ///    - On success, Firebase **automatically signs the user in**
   ///
+  /// 2) updateProfile
+  ///    - Performs a **full overwrite** of the Firestore user document
+  ///    - Stores a normalized `UserModel` built from the provided inputs
+  ///
+  /// 3) getOrCreateUserModel
+  ///    - Reads the Firestore user profile back as a typed `UserModel`
+  ///    - If the document is missing (unexpected), it is created
+  ///
+  /// If step (2) fails after Auth creation, the newly created Auth account
+  /// is deleted as a compensating action to prevent orphaned users.
+  ///
+  /// ---------------------------------------------------------------------------
+  /// INPUTS
+  /// - email (String, required)
+  ///   Email address used for authentication and profile creation.
+  ///
+  /// - password (String, required)
+  ///   Plain-text password used only for account creation.
+  ///   Never persisted or retained after this call.
+  ///
+  /// - username (String, optional, default: '')
+  ///   Display name stored in the Firestore user profile.
+  ///
+  /// - dietaryRestrictions (List<String>, optional, default: empty list)
+  ///   Stored in the Firestore profile after trimming and empty-value filtering.
+  ///
+  /// - preferredCuisine (List<String>, optional, default: empty list)
+  ///   Stored in the Firestore profile after trimming and empty-value filtering.
+  ///
+  /// ---------------------------------------------------------------------------
   /// OUTPUT
-  ///  - Returns [UserCredential] from the final `logIn(...)` step.
+  /// - Returns a `Future<RegistrationResult>`
   ///
-  /// ERRORS (UI-detectable)
-  ///  - Throws [RegisterFailure] with:
-  ///      stage: RegisterStage.createUser | updateProfile | logIn | unknown
-  ///      code : FirebaseAuthException.code (auth stages), FirebaseException.code
-  ///             for Firestore writes, or 'unknown'
-  ///      message: human-readable message
-  ///  - Common auth codes your UI may branch on:
-  ///      * 'email-already-in-use', 'invalid-email', 'weak-password',
-  ///        'user-not-found', 'wrong-password', 'user-disabled'
+  ///   `RegistrationResult` contains:
+  ///   - credential (UserCredential)
+  ///       The Firebase Auth credential created during account registration.
+  ///   - user (UserModel)
+  ///       The fully populated Firestore-backed user profile.
   ///
-  /// ANALYTICS
-  ///  - Emits: 'register_started' | 'register_create_user_success'
-  ///           | 'register_profile_updated' | 'register_login_success'
-  ///           | 'register_completed' | 'register_failed'
-  Future<UserCredential> registerUser({
+  /// The returned user is **already authenticated**.
+  ///
+  /// ---------------------------------------------------------------------------
+  /// SIDE EFFECTS
+  /// - Creates a Firebase Auth user
+  /// - Writes a Firestore user document (full overwrite)
+  /// - May delete the Auth user if profile persistence fails
+  ///
+  /// ---------------------------------------------------------------------------
+  /// ERRORS
+  /// Throws `RegisterFailure`, which is safe for UI-level handling.
+  ///
+  /// Possible failure stages:
+  /// - stage: 'createUser'
+  ///   Thrown when Firebase Auth account creation fails.
+  ///
+  /// - stage: 'updateProfile'
+  ///   Thrown when Firestore profile write or retrieval fails.
+  ///
+  /// - stage: 'unknown'
+  ///   Thrown for any unexpected error.
+  ///
+  /// Error fields:
+  /// - code (String)
+  ///   FirebaseAuthException.code, FirebaseException.code, or 'unknown'
+  ///
+  /// - message (String)
+  ///   Human-readable description of the failure
+  ///
+  /// Common Firebase Auth error codes the UI may branch on:
+  /// - 'email-already-in-use'
+  /// - 'invalid-email'
+  /// - 'weak-password'
+  /// - 'user-disabled'
+  ///
+  Future<RegistrationResult> registerUser({
     required String email,
     required String password,
-    String? username,
-    List<String>? dietaryRestrictions,
-    List<String>? preferredCuisine,
+    String username = '',
+    List<String> dietaryRestrictions = const [],
+    List<String> preferredCuisine = const [],
   }) async {
-    await _safeLogEvent('register_started', params: {'method': 'email_password'});
-
     UserCredential createdCred;
+
     try {
-      // Avoid double-logging inside child methods; we log centrally here.
-      createdCred = await createUser(
-        email: email,
-        password: password,
-        logAnalytics: false,
+      // 1) Auth account creation (user becomes signed-in on success)
+      createdCred = await createUser(email: email, password: password); // Auth-only; sign-up auto-signs in 
+
+      // Build the profile to fully store in Firestore (override semantics)
+      final modelToWrite = UserModel(
+        uid: createdCred.user!.uid,
+        username: username.trim(),
+        email: email.trim(),
+        dietaryRestrictions: dietaryRestrictions
+            .map((e) => e.trim())
+            .where((e) => e.isNotEmpty)
+            .toList(growable: false),
+        preferredCuisine: preferredCuisine
+            .map((e) => e.trim())
+            .where((e) => e.isNotEmpty)
+            .toList(growable: false),
+        hostedRooms: const [], // model-only, not stored 
       );
-      await _analytics.setUserId(createdCred.user!.uid);
-      await _safeLogEvent('register_create_user_success');
+
+      // 2) Full overwrite of the Firestore user doc
+      try {
+        await updateProfile(updated: modelToWrite); // uses replaceUser(...) to overwrite 
+      } catch (e) {
+        // Compensate: delete the Auth account so we don't leave ghost users.
+        try { await removeAcc(createdCred.user!); } catch (_) {/* best effort */}
+        rethrow;
+      }
+
+      // 3) Load the typed UserModel (create if somehow missing)
+      final baseModel = await getOrCreateUserModel(
+        uid: createdCred.user!.uid,
+        email: email,
+      ); // reads users/{uid} or creates default and writes it 
+
+      // 4) Enrich with hosted room IDs
+      final hostedIds = await getHostedRoomIds(hostUid: baseModel.uid); // query rooms by host_uid 
+      final enriched = baseModel.copyWith(hostedRooms: hostedIds);
+
+      return RegistrationResult(credential: createdCred, user: enriched);
+
     } on FirebaseAuthException catch (e) {
-      await _safeLogEvent('register_failed', params: {'stage': 'create_user', 'code': e.code});
       throw RegisterFailure(
-        stage: RegisterStage.createUser,
+        stage: 'createUser',
         code: e.code,
         message: e.message ?? 'Failed to create account.',
       );
     } on FirebaseException catch (e) {
-      // Firestore seeding error is already compensated (auth deletion) in createUser.
-      await _safeLogEvent('register_failed', params: {'stage': 'create_user_firestore', 'code': e.code});
       throw RegisterFailure(
-        stage: RegisterStage.createUser,
+        stage: 'updateProfile',
         code: e.code,
-        message: e.message ?? 'Failed to seed user document.',
+        message: e.message ?? 'Failed to store user profile.',
       );
     } catch (e) {
-      await _safeLogEvent('register_failed', params: {'stage': 'create_user_unknown'});
       throw RegisterFailure(
-        stage: RegisterStage.createUser,
+        stage: 'unknown',
         code: 'unknown',
         message: e.toString(),
       );
     }
+  }
 
-    // Stage 2: Optional profile update if fields are provided
-    final hasProfileData = (username != null) ||
-        (dietaryRestrictions != null) ||
-        (preferredCuisine != null);
 
-    if (hasProfileData) {
-      try {
-        final updatedModel = UserModel(
-          uid: createdCred.user!.uid,
-          email: email,
-          username: (username ?? '').trim(),
-          dietaryRestrictions: (dietaryRestrictions ?? const [])
-              .map((e) => e.trim())
-              .where((e) => e.isNotEmpty)
-              .toList(growable: false),
-          preferredCuisine: (preferredCuisine ?? const [])
-              .map((e) => e.trim())
-              .where((e) => e.isNotEmpty)
-              .toList(growable: false),
-          hostedRooms: const [],
-        );
-        await updateProfile(updated: updatedModel); // Never touches uid/email. 
-        await _safeLogEvent('register_profile_updated');
-      } on FirebaseException catch (e) {
-        await _safeLogEvent('register_failed', params: {'stage': 'update_profile', 'code': e.code});
-        throw RegisterFailure(
-          stage: RegisterStage.updateProfile,
-          code: e.code,
-          message: e.message ?? 'Failed to update profile.',
-        );
-      } catch (e) {
-        await _safeLogEvent('register_failed', params: {'stage': 'update_profile_unknown'});
-        throw RegisterFailure(
-          stage: RegisterStage.updateProfile,
-          code: 'unknown',
-          message: e.toString(),
-        );
-      }
-    }
-
-    // Stage 3: Ensure logged in (even though many SDKs sign in after signUp,
-    // we standardize by invoking logIn for a predictable return type). 
+  /* ====================================================================
+  * 2. USER LOGIN
+  * --------------------------------------------------------------------
+  * This section contains:
+  *
+  *   - logIn(...)               : Sign in a user with email/password
+  *                               and ensure a Firestore-backed UserModel exists
+  *   - getOrCreateUserModel(...) : Helper to fetch or create a Firestore user profile
+  *
+  * Design notes:
+  *  - Auth + Firestore separation: `logIn` returns both the Firebase Auth credential
+  *    and the typed UserModel for UI rendering.
+  *  - Error handling: throws [RegisterFailure] with stage 'logIn', 'userModel',
+  *    or 'unknown' for easy UI detection.
+  * ==================================================================== */
+  /// Logs a user in using Firebase Authentication (email + password) and ensures
+  /// a corresponding Firestore user profile exists for UI consumption.
+  ///
+  /// FLOW:
+  /// 1) Sign in via Firebase Auth (`_auth.signIn`). User becomes signed-in.
+  /// 2) Fetch the Firestore `UserModel` for the signed-in user.
+  ///    - If the user document does not exist, a default `UserModel` is created.
+  /// 3) Return both the Auth credential and the Firestore-backed `UserModel`.
+  ///
+  /// INPUTS:
+  /// - [email] (String, required): The email address of the user.
+  /// - [password] (String, required): The user's password.
+  ///
+  /// OUTPUT:
+  /// - Returns a [RegistrationResult] containing:
+  ///   * `credential` (UserCredential): The Firebase Auth user object (signed in).
+  ///   * `user` (UserModel)        : The Firestore-backed user profile for UI rendering.
+  ///
+  /// ERRORS:
+  /// - Throws [RegisterFailure] with `stage = 'logIn'` if FirebaseAuth sign-in fails.
+  ///   Common codes: 'user-not-found', 'wrong-password', 'user-disabled', etc.
+  /// - Throws [RegisterFailure] with `stage = 'userModel'` if Firestore read/create fails.
+  /// - Throws [RegisterFailure] with `stage = 'unknown'` for any unexpected errors.
+  ///
+  /// NOTES:
+  /// - Returning both the Auth `credential` and the `UserModel` is redundant for normal UI usage
+  ///   because the current user is also accessible via `FirebaseAuth.instance.currentUser`.
+  ///   However, returning both is convenient for unit tests or flows that want immediate access
+  ///   to both objects without touching singletons.
+  /// - The function ensures database integrity: if Firestore operations fail, the user remains
+  ///   signed-in, but the UI will receive a failure to handle appropriately.
+  Future<RegistrationResult> logIn({
+    required String email,
+    required String password,
+  }) async {
     try {
-      final loggedIn = await logIn(
-        email: email,
-        password: password,
-        logAnalytics: false,
-      );
-      // Centralized analytics for the master flow:
-      final uid = loggedIn.user?.uid ?? createdCred.user?.uid;
-      if (uid != null) await _analytics.setUserId(uid);
-      await _safeLogEvent('register_login_success', params: {'method': 'email_password'});
-      await _analytics.logLogin(method: 'email_password'); // 'login' event. 
-      await _safeLogEvent('register_completed', params: {'method': 'email_password'});
-      return loggedIn;
+      // 1) Sign in via Firebase Auth (email + password)
+      final cred = await _auth.signIn(email, password); // FirebaseAuth.signInWithEmailAndPassword wrapper
+      final String uid = cred.user!.uid;
+      final String resolvedEmail = cred.user!.email ?? email;
+
+      // 2) Ensure we have a Firestore-backed UserModel to display in the UI.
+      final baseModel = await getOrCreateUserModel(
+        uid: uid,
+        email: resolvedEmail,
+      ); // reads users/{uid} or creates default and writes it
+
+      // 3) Enrich with hosted room IDs
+      final hostedIds = await getHostedRoomIds(hostUid: baseModel.uid); // query rooms by host_uid and emit room_id(s)
+      final enriched = baseModel.copyWith(hostedRooms: hostedIds);
+
+      // 4) Return both objects to the caller/UI.
+      return RegistrationResult(credential: cred, user: enriched);
+
     } on FirebaseAuthException catch (e) {
-      await _safeLogEvent('register_failed', params: {'stage': 'log_in', 'code': e.code});
       throw RegisterFailure(
-        stage: RegisterStage.logIn,
+        stage: 'logIn',
         code: e.code,
         message: e.message ?? 'Failed to log in.',
       );
-    } catch (e) {
-      await _safeLogEvent('register_failed', params: {'stage': 'log_in_unknown'});
+    } on FirebaseException catch (e) {
       throw RegisterFailure(
-        stage: RegisterStage.logIn,
+        stage: 'userModel',
+        code: e.code,
+        message: e.message ?? 'Failed to load user profile.',
+      );
+    } catch (e) {
+      throw RegisterFailure(
+        stage: 'unknown',
         code: 'unknown',
         message: e.toString(),
       );
     }
   }
 
-  // -------------------------- private helpers ------------------------
-
-  Future<void> _safeLogEvent(String name, {Map<String, dynamic>? params}) async {
-    try {
-      await _analytics.logEvent(name, params: params); // generic analytics event. 
-    } catch (_) {/* non-fatal */}
-  }
 
     // -------------------------- getHostedRoomIds ---------------------------
-
-    /// Returns the list of room document IDs hosted by the given [hostUid].
-    ///
-    /// QUERY
-    ///   rooms where host_uid == hostUid
-    ///
-    /// RETURNS
-    ///   List<String> — each entry is the Firestore document ID (roomId).
-    ///
-    /// ERRORS
-    ///   Surfaces [FirebaseException] on query errors for the UI to handle.
-    Future<List<String>> getHostedRoomIds({required String hostUid}) async {
-    // Optional analytics breadcrumbs (non-fatal).
-    try { await _analytics.logEvent('get_hosted_room_ids_started', params: {'host_uid': hostUid}); } catch (_) {}
-
+  /// Returns the list of room IDs hosted by [hostUid].
+  /// Matches rooms where room.host_uid == hostUid.
+  /// NOTE:
+  /// - Reads 'room_id' from the document data to match spec.
+  /// - Falls back to the document ID if 'room_id' is missing/empty.
+  /// - Trims and de-duplicates results.
+  Future<List<String>> getHostedRoomIds({required String hostUid}) async {
     final snapshot = await FirebaseFirestore.instance
         .collection('rooms')
         .where('host_uid', isEqualTo: hostUid)
-        .get(); // single query for hosted rooms 
+        .get();
 
-    final ids = snapshot.docs.map((doc) => doc.id).toList(growable: false);
-
-    try {
-        await _analytics.logEvent('get_hosted_room_ids_success', params: {
-        'host_uid': hostUid,
-        'count': ids.length,
-        });
-    } catch (_) {}
+    final ids = snapshot.docs
+        .map((doc) {
+          final data = doc.data();
+          final roomId = (data['room_id'] as String?)?.trim();
+          return (roomId == null || roomId.isEmpty) ? doc.id : roomId;
+        })
+        .where((id) => id.trim().isNotEmpty)
+        .map((id) => id.trim())
+        .toSet()
+        .toList(growable: false);
 
     return ids;
-    }
+  }
+
 
 /* ====================================================================
  * 3. CREATE ROOM
@@ -357,101 +428,112 @@ class RegisterFailure implements Exception {
  *  - Analytics: logs 'room_created' and a few breadcrumb events.
  * ==================================================================== */
 
-    /// Creates a room document in Firestore at the specified [roomId].
-    /// No RoomModel is used—data is written as a raw map.
-    /// Required fields:
-    ///   room_id, host_uid, done_participants, active_participants,
-    ///   output, createdTime, expiryTime
-    ///
-    /// Returns: void
-    Future<void> createRoom({
+  /// Creates a room document in Firestore at the specified [roomId].
+  /// Room table schema (on create):
+  ///   room_id     : String
+  ///   host_uid    : String
+  ///   output      : Map<String, dynamic>  // declared empty on creation
+  ///   createdTime : server timestamp
+  ///   expiryTime  : createdTime + 6 hours (computed client-side)
+  ///
+  /// Throws FirebaseException on failure.
+  Future<void> createRoom({
     required String roomId,
     required String hostUid,
-    }) async {
-    // Server-created timestamp for 'createdTime'.
+  }) async {
+    // Use a server-side timestamp for 'createdTime'
     final createdTime = FieldValue.serverTimestamp();
 
-    // Set expiry based on client time (now + 6 hours). Firestore TTL
-    // policies can target this field if configured in your project.
+    // Compute expiry client-side as now + 6 hours.
+    // (This is acceptable because 'createdTime' is written by the server and
+    //  'expiryTime' just needs to be ~6 hours ahead for TTL or cleanup flows.)
     final expiryTime = Timestamp.fromDate(
-        DateTime.now().toUtc().add(const Duration(hours: 6)),
+      DateTime.now().toUtc().add(const Duration(hours: 6)),
     );
 
     final roomData = <String, dynamic>{
-        'room_id': roomId,
-        'host_uid': hostUid,
-        'done_participants': <String>[],
-        'active_participants': <String>[],
-        'output': <String, dynamic>{},
-        'createdTime': createdTime,
-        'expiryTime': expiryTime,
+      'room_id': roomId,
+      'host_uid': hostUid,
+      'output': <String, dynamic>{}, // empty payload on creation
+      'createdTime': createdTime,
+      'expiryTime': expiryTime,
     };
 
-    // Use FirestoreService.setRoom(roomId, data, merge:false) to create/replace. 
+    // Create/replace the room document at rooms/{roomId}
     await _db.setRoom(roomId, roomData, merge: false);
-    // Optional: lightweight analytics breadcrumb (non-fatal). 
-    try { await _analytics.logEvent('room_create_doc_success', params: {'room_id': roomId}); } catch (_) {}
-    }
+  }
 
-    /// Generates a unique 6-character room code using A–Z + 0–9.
-    /// Repeats until it finds an unused id (checks rooms/{code} existence).
-    ///
-    /// Returns: String (unique roomId)
-    Future<String> generateRoomId() async {
-    const String _alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-    const int _len = 6;
-    final rnd = Random.secure();
 
-    String _make() {
-        final sb = StringBuffer();
-        for (var i = 0; i < _len; i++) {
-          sb.write(_alphabet[rnd.nextInt(_alphabet.length)]);
-        }
-        return sb.toString();
-    }
+  /// Generates a unique 6-character room code using A–Z + 0–9.
+  /// Repeats until it finds an unused id (checks rooms/{code} existence).
+  ///
+  /// Returns: String (unique roomId)
+  Future<String> generateRoomId() async {
+  const String _alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+  const int _len = 6;
+  final rnd = Random.secure();
 
-    // Loop until unique; the probability of collision is tiny (36^6 combos),
-    // but we still check Firestore: rooms/{roomId} must not exist. 
-    while (true) {
-        final candidate = _make();
-        final exists = await _db.getRoom(candidate) != null; // reads rooms/{candidate} 
-        if (!exists) return candidate;
-        //##change##
-        // final docSnap = await _db.roomDoc(candidate).get() != null; // reads rooms/{candidate} 
-        // if (!docSnap.exists) return candidate;
-    }
-    }
+  String _make() {
+      final sb = StringBuffer();
+      for (var i = 0; i < _len; i++) {
+        sb.write(_alphabet[rnd.nextInt(_alphabet.length)]);
+      }
+      return sb.toString();
+  }
 
-    /// MASTER: Creates a new room for [currentUser].
-    ///
-    /// ORDER OF OPERATIONS
-    ///  1) Capacity check: user can host at most 5 rooms
-    ///  2) Generate roomId via generateRoomId()
-    ///  3) Create Firestore room via createRoom(...)
-    ///  4) Return an updated UserModel with `hostedRooms += roomId`
-    ///
-    /// INPUT
-    ///  - currentUser (UserModel, required)
-    ///
-    /// OUTPUT
-    ///  - Returns an updated UserModel in which `hostedRooms` contains
-    ///    the newly created roomId as the last element.
-    ///    (The UI can read `updatedUser.hostedRooms.last` to get the id.)
-    ///
-    /// ERRORS (UI-detectable)
-    ///  - Throws [StateError('host-limit-reached')] if the user already
-    ///    hosts 5 rooms.
-    ///  - Firestore-related exceptions surface as [FirebaseException]
-    ///    from the underlying service calls (create/set). 
-    Future<UserModel> newRoom({required UserModel currentUser}) async {
+  // Loop until unique; the probability of collision is tiny (36^6 combos),
+  // but we still check Firestore: rooms/{roomId} must not exist. 
+  while (true) {
+      final candidate = _make();
+      final exists = await _db.getRoom(candidate) != null; // reads rooms/{candidate} 
+      if (!exists) return candidate;
+      //##change##
+      // final docSnap = await _db.roomDoc(candidate).get() != null; // reads rooms/{candidate} 
+      // if (!docSnap.exists) return candidate;
+    }
+  }
+
+  /// ====================================================================
+  /// MASTER: Create a new room for a given user
+  /// --------------------------------------------------------------------
+  /// This function encapsulates the full "create room" flow:
+  ///
+  /// ORDER OF OPERATIONS
+  /// 1) Capacity check:
+  ///    - Ensures [currentUser] hosts at most 5 rooms; throws if exceeded.
+  /// 2) Generate room ID:
+  ///    - Calls [generateRoomId()] to produce a unique 6-character code.
+  /// 3) Create Firestore document:
+  ///    - Calls [createRoom()] to write the room data to Firestore.
+  /// 4) Return updated user model:
+  ///    - Produces a new [UserModel] with the new room appended to `hostedRooms`.
+  ///
+  /// INPUTS
+  /// - currentUser (UserModel, required):
+  ///   The user who will host the new room. Must have a valid `uid` and
+  ///   existing `hostedRooms` list.
+  ///
+  /// OUTPUT
+  /// - Returns a **new** [UserModel] instance with `hostedRooms` updated
+  ///   to include the newly created room ID. Original [currentUser] is
+  ///   unchanged (immutability preserved).
+  ///
+  /// ERRORS / EXCEPTIONS
+  /// - Throws [StateError] with message `'host-limit-reached'` if
+  ///   `currentUser.hostedRooms.length >= 5`.
+  /// - Any errors from [generateRoomId()] or [createRoom()] will propagate
+  ///   (e.g., Firestore write failures).
+  ///
+  /// NOTES
+  /// - Immutability: [UserModel] fields are final; the returned instance
+  ///   must replace the in-memory reference in the UI to reflect changes.
+  /// - Room ID generation guarantees uniqueness in the `rooms` collection.
+  /// ====================================================================
+  Future<UserModel> newRoom({required UserModel currentUser}) async {
     // 1) Capacity check
     if (currentUser.hostedRooms.length >= 5) {
-        // Simple, UI-detectable signal without new helper classes.
-        throw StateError('host-limit-reached');
+      throw StateError('host-limit-reached');
     }
-
-    // Analytics breadcrumb (non-fatal). 
-    try { await _analytics.logEvent('room_create_started'); } catch (_) {}
 
     // 2) Generate a unique roomId
     final roomId = await generateRoomId();
@@ -459,20 +541,15 @@ class RegisterFailure implements Exception {
     // 3) Create the room doc
     await createRoom(roomId: roomId, hostUid: currentUser.uid);
 
-    // 4) Update the in-memory model (immutable copy with appended id)
+    // 4) Return a new model with the roomId appended
+    //    (immutability: we create a new list & new model)
     final updated = currentUser.copyWith(
-        hostedRooms: [...currentUser.hostedRooms, roomId],
+      hostedRooms: [...currentUser.hostedRooms, roomId],
     );
 
-    // Analytics: log the canonical 'room_created' event. 
-    try {
-        await _analytics.logRoomCreated(roomId: roomId);
-        await _analytics.logEvent('room_created_master', params: {'room_id': roomId});
-    } catch (_) {}
-
     return updated;
-    }
-}
+  }
+
 
 /* ====================================================================
  * 4. JOIN ROOM
