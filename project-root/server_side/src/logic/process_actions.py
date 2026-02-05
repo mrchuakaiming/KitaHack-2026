@@ -29,6 +29,13 @@ def data_converter(room_data: Dict[str, Any], maps_service) -> Dict[str, Any]:
     """
     Convert client-sent room data into AI-readable structure.
     Replaces each placeId with full place details from MapsService.
+
+    Args:
+        room_data (Dict[str, Any]): Room data from Firestore.
+        maps_service: Instance of MapsService for fetching place details.
+
+    Returns:
+        Dict[str, Any]: Converted data with counts and place details.
     """
     participants = room_data.get("participants", [])
     if not participants:
@@ -90,6 +97,12 @@ def data_converter(room_data: Dict[str, Any], maps_service) -> Dict[str, Any]:
 def generate_prompt_for_ai(data: Dict[str, Any]) -> str:
     """
     Generate strict JSON prompt for Gemini AI.
+
+    Args:
+        data (Dict[str, Any]): Converted room data for AI.
+
+    Returns:        
+        str: Prompt string for AI model.
     """
     return f"""
 You are an AI decision engine for a group dining app.
@@ -124,6 +137,12 @@ TASK:
 def generate_prompt_for_user(reasoning_sentence: str) -> str:
     """
     Enhance AI reasoning for user-friendly display.
+
+    Args:
+        reasoning_sentence (str): Original AI reasoning.
+
+    Returns:
+        str: Enhanced reasoning.
     """
     try:
         client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
@@ -146,6 +165,13 @@ Original sentence: "{reasoning_sentence}"
 def our_model(room_data: Dict[str, Any], maps_service) -> Dict[str, Any]:
     """
     Core AI decision logic called by client-side AIService.
+    
+    Args:
+        room_data (Dict[str, Any]): Room data from Firestore.
+        maps_service: Instance of MapsService for fetching place details.
+
+    Returns:
+        Dict[str, Any]: AI recommendation result.
     """
     try:
         converted_data = data_converter(room_data, maps_service)

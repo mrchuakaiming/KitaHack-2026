@@ -9,6 +9,26 @@ import '../models/participant.dart';
 import 'dart:math';
 import 'package:cloud_firestore/cloud_firestore.dart'; // FieldValue, Timestamp
 
+/// Coordinates multi-service flows for the UI (MVVM-friendly).
+class Coordinator {
+  final AuthService _auth;
+  final FirestoreService _db;
+  final AnalyticsService _analytics; //remove
+  final MapsService _maps;
+  final RTDBService _rtdb;
+
+  Coordinator({
+    AuthService? auth,
+    FirestoreService? db,
+    AnalyticsService? analytics, // remove
+    MapsService? maps,
+    RTDBService? rtdb,
+  })  : _auth = auth ?? AuthService(),
+        _db = db ?? FirestoreService(),
+        _analytics = analytics ?? AnalyticsService(),//remove
+        _maps = maps ?? MapsService(),
+        _rtdb = rtdb ?? RTDBService();
+
 /* ====================================================================
  * 1. REGISTER
  * --------------------------------------------------------------------
@@ -45,21 +65,6 @@ class RegisterFailure implements Exception {
   String toString() =>
       'RegisterFailure(stage: $stage, code: $code, message: $message)';
 }
-
-/// Coordinates multi-service flows for the UI (MVVM-friendly).
-class Coordinator {
-  final AuthService _auth;
-  final FirestoreService _db;
-  final AnalyticsService _analytics;
-
-  Coordinator({
-    AuthService? auth,
-    FirestoreService? db,
-    AnalyticsService? analytics,
-  })  : _auth = auth ?? AuthService(),
-        _db = db ?? FirestoreService(),
-        _analytics = analytics ?? AnalyticsService();
-
   // ---------------------------- createUser ----------------------------
 
   /// Creates a Firebase Auth user and seeds a minimal user document.
@@ -399,7 +404,7 @@ class Coordinator {
     String _make() {
         final sb = StringBuffer();
         for (var i = 0; i < _len; i++) {
-        sb.write(_alphabet[rnd.nextInt(_alphabet.length)]);
+          sb.write(_alphabet[rnd.nextInt(_alphabet.length)]);
         }
         return sb.toString();
     }
@@ -410,6 +415,9 @@ class Coordinator {
         final candidate = _make();
         final exists = await _db.getRoom(candidate) != null; // reads rooms/{candidate} 
         if (!exists) return candidate;
+        //##change##
+        // final docSnap = await _db.roomDoc(candidate).get() != null; // reads rooms/{candidate} 
+        // if (!docSnap.exists) return candidate;
     }
     }
 
@@ -558,6 +566,7 @@ Future<bool> submitPreference({
   required PreferencesModel participant,
 }) async {
   try {
+    //Fetch user defaults from Firestore
     final user = await firestoreService.getUser(uid);
 
     final updatedParticipant = PreferencesModel(
@@ -567,13 +576,21 @@ Future<bool> submitPreference({
       dietaryRestrictions: user?.dietaryRestrictions ?? [],
     );
 
+    // Update Firestore room document
     await firestoreService.updateRoom(roomId, {
       'participants.$uid': updatedParticipant.toJson(),
     });
 
+    // Mark participant as submitted in Realtime Database
+    await rtdbService.setParticipantSubmitted(
+      roomId: roomId,
+      uid: uid,
+      submitted: true,
+    );
+
     return true;
-  } catch (e) {
-    print('[submitPreference] Failed: $e');
+  } catch (e, st) {
+    print('[submitPreference] Failed: $e\n$st');
     return false;
   }
 }
@@ -658,12 +675,18 @@ Future<String> storeRecommendation({
   required String roomId,
   required Map<String, dynamic> result,
   required FirestoreService firestore,
+  required RTDBService rtdbService,
 }) async {
   try {
+    //Store AI recommendation in Firestore
     await firestore.updateRoom(roomId, {
       "aiRecommendation": result,
       "aiStatus": "done",
     });
+
+    //Clean up all participants in RTDB for this room
+    await rtdbService.deleteRoomParticipants(roomId);
+
     return "success";
   } catch (e) {
     return "Failed to store recommendation: $e";
@@ -680,13 +703,14 @@ Future<void> wantResult({
   required List<String> doneUsers,
   required FirestoreService firestore,
 }) async {
-  // Update done_users in Room document
-  await firestore.updateRoom(roomId, {
-    "done_users": doneUsers,
+  try{
+    // Update done_users in Room document
+    await _db.updateRoom(roomId, {
+      "done_users": doneUsers,
   });
 
-  // Optionally, the UI layer should listen to this Room document and
-  // show results for each done user in real-time via roomStream()
+  }catch(e,st){throw Exception('Failed to update done_users: $e\n$st');
+  }
 }
 
 /// -----------------------------
