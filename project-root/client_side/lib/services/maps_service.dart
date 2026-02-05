@@ -7,7 +7,8 @@ import 'package:google_maps/google_maps.dart' as gmaps;
 /// MapsService
 ///
 /// Handles all Google Maps functionality for the client-side web app (UI).
-/// This service **does not contain any API keys**, the server handles AI recommendations securely.
+/// This service **does not contain any API keys**.
+/// All Google Maps Web API calls are handled by the server.
 ///
 /// ----------------------------
 /// USAGE / FUNCTION GUIDE
@@ -15,127 +16,145 @@ import 'package:google_maps/google_maps.dart' as gmaps;
 /// 1. Initialize the map on page load:
 ///    `initMap(mapElementId)`
 ///
-/// 2. User searches for restaurants (directly on the map):
+/// 2. User searches for restaurants:
 ///    `searchRestaurants(query)`
-///    - Uses Google Maps JS SDK
-///    - Returns a list of { name, placeId, location }
+///    - Calls server endpoint
+///    - Returns a list of { name, placeId, lat, lng }
 ///    - **Called when user types a search query in UI**
 ///
 /// 3. Show AI recommendation:
-///    `showAIRecommendation(recommendedPlaceId: "xyz")`
+///    `showAIRecommendation(recommendedPlaceId)`
 ///    - Fetches full place details from the server using placeId
 ///    - Adds a marker to the map and centers it
 ///    - **Called when AI sends back recommendedPlaceId**
 ///
 /// 4. Get full place details from server (internal for AI recommendation):
-///    `getPlaceDetailsFromServer(placeId)`
+///    `getPlaceDetails(placeId)`
 ///    - Calls server endpoint `/maps/place/{placeId}`
 ///    - Returns lat/lng and optional name
-///    - **Called automatically inside showAIRecommendation**
 ///
 /// ----------------------------
 /// NOTES
 /// ----------------------------
-/// - User searches should **always use `searchRestaurants`** (client-side, instant results)
-/// - AI recommendations should **always call `showAIRecommendation`**
-///   to fetch secure data from server (server has API key)
-/// - No server calls for normal user searches, all displayed directly in the map
-/// - Markers are clickable, open Google Maps in new tab
+/// - This file NEVER calls Google Maps Web APIs
+/// - This file NEVER uses an API key
+/// - Server decides WHAT data to return
+/// - Client decides HOW to display it
 
 class MapsService {
   gmaps.GMap? _map;
-  gmaps.PlacesService? _placesService;
   final List<gmaps.Marker> _markers = [];
-  gmaps.Marker? _aiMarker;
 
-  final String serverBaseUrl; // e.g., "https://your-server.com"
+  final String serverBaseUrl; // e.g. https://your-server.com
 
   MapsService({required this.serverBaseUrl});
 
   /// ----------------------------
   /// MAP INITIALIZATION (UI)
   /// ----------------------------
-  void initMap(String mapElementId,
-      {double lat = 3.1390, double lng = 101.6869, int zoom = 12}) {
+  void initMap(
+    String mapElementId, {
+    double lat = 3.1390,
+    double lng = 101.6869,
+    int zoom = 12,
+  }) {
     final mapOptions = gmaps.MapOptions()
       ..center = gmaps.LatLng(lat, lng)
       ..zoom = zoom;
 
-    _map = gmaps.GMap(document.getElementById(mapElementId)!, mapOptions);
-    _placesService = gmaps.PlacesService(_map!);
+    _map = gmaps.GMap(
+      document.getElementById(mapElementId)!,
+      mapOptions,
+    );
   }
 
   /// ----------------------------
-  /// CLIENT-SIDE SEARCH FOR USER (Google Maps JS SDK)
+  /// USER SEARCH (SERVER-SIDE)
   /// ----------------------------
   Future<List<Map<String, dynamic>>> searchRestaurants(String query) async {
-    if (_placesService == null) return [];
+    if (query.trim().isEmpty) return [];
 
-    final completer = Completer<List<Map<String, dynamic>>>();
-    final request = gmaps.TextSearchRequest()
-      ..query = query
-      ..type = 'restaurant';
+    try {
+      final url = Uri.parse("$serverBaseUrl/maps/search");
+      final response = await http.post(
+        url,
+        headers: {"Content-Type": "application/json"},
+        body: jsonEncode({"query": query}),
+      );
 
-    _placesService!.textSearch(request, (results, status) {
-      if (status == gmaps.PlacesServiceStatus.OK && results != null) {
-        final places = results.map((p) {
-          return {
-            "name": p.name ?? "",
-            "placeId": p.placeId ?? "",
-            "location":
-                "${p.geometry?.location?.lat ?? 0.0},${p.geometry?.location?.lng ?? 0.0}",
-          };
-        }).toList();
-        completer.complete(places);
-      } else {
-        completer.complete([]);
-      }
-    });
+      if (response.statusCode != 200) return [];
 
-    return completer.future;
+      final data = jsonDecode(response.body) as List<dynamic>;
+
+      _clearMarkers();
+
+      final results = data.map<Map<String, dynamic>>((e) {
+        final lat = e["lat"];
+        final lng = e["lng"];
+        final name = e["name"] ?? "";
+
+        _addMarker(lat, lng, name);
+
+        return {
+          "name": name,
+          "placeId": e["placeId"],
+          "lat": lat,
+          "lng": lng,
+        };
+      }).toList();
+
+      return results;
+    } catch (e) {
+      print("[ERROR] searchRestaurants failed: $e");
+      return [];
+    }
   }
 
   /// ----------------------------
   /// SHOW AI RECOMMENDATION (SERVER-SIDE)
   /// ----------------------------
   Future<void> showAIRecommendation({
-    String? recommendedPlaceId,
-    String placeName = "AI Recommendation",
+    required String recommendedPlaceId,
+    String placeNameFallback = "AI Recommendation",
   }) async {
     if (_map == null) return;
+
     _clearMarkers();
 
-    if (recommendedPlaceId != null) {
-      // Get full details from server (lat/lng, name)
-      final location = await getPlaceDetailsFromServer(recommendedPlaceId);
-      if (location != null) {
-        _addMarker(location["lat"], location["lng"], location["name"] ?? placeName);
-        _map!.center = gmaps.LatLng(location["lat"], location["lng"]);
-        _map!.zoom = 15;
-      }
-    }
+    final details = await getPlaceDetails(recommendedPlaceId);
+    if (details == null) return;
+
+    final lat = details["lat"];
+    final lng = details["lng"];
+    final name = details["name"] ?? placeNameFallback;
+
+    _addMarker(lat, lng, name);
+    _map!
+      ..center = gmaps.LatLng(lat, lng)
+      ..zoom = 15;
   }
 
   /// ----------------------------
   /// SERVER-SIDE API CALL
   /// ----------------------------
-  Future<Map<String, dynamic>?> getPlaceDetailsFromServer(String placeId) async {
+  Future<Map<String, dynamic>?> getPlaceDetails(String placeId) async {
     try {
       final url = Uri.parse("$serverBaseUrl/maps/place/$placeId");
       final response = await http.get(url);
 
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        return {
-          "lat": data["lat"],
-          "lng": data["lng"],
-          "name": data["name"] ?? "",
-        };
-      }
+      if (response.statusCode != 200) return null;
+
+      final data = jsonDecode(response.body);
+      return {
+        "placeId": placeId,
+        "name": data["name"],
+        "lat": data["lat"],
+        "lng": data["lng"],
+      };
     } catch (e) {
-      print("[ERROR] getPlaceDetailsFromServer failed: $e");
+      print("[ERROR] getPlaceDetails failed: $e");
+      return null;
     }
-    return null;
   }
 
   /// ----------------------------
@@ -143,14 +162,18 @@ class MapsService {
   /// ----------------------------
   void _addMarker(double lat, double lng, String title) {
     final position = gmaps.LatLng(lat, lng);
-    final marker = gmaps.Marker(gmaps.MarkerOptions()
-      ..position = position
-      ..map = _map
-      ..title = title
-      ..clickable = true);
+
+    final marker = gmaps.Marker(
+      gmaps.MarkerOptions()
+        ..position = position
+        ..map = _map
+        ..title = title
+        ..clickable = true,
+    );
 
     marker.onClick.listen((_) {
-      final url = "https://www.google.com/maps/search/?api=1&query=$lat,$lng";
+      final url =
+          "https://www.google.com/maps/search/?api=1&query=$lat,$lng";
       window.open(url, "_blank");
     });
 
@@ -158,10 +181,9 @@ class MapsService {
   }
 
   void _clearMarkers() {
-    for (var marker in _markers) {
+    for (final marker in _markers) {
       marker.map = null;
     }
     _markers.clear();
-    _aiMarker?.map = null;
   }
 }

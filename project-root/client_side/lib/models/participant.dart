@@ -1,7 +1,4 @@
-class ParticipantModel {
-  // /// Firebase user ID
-  // final String uid;
-
+class PreferencesModel {
   // /// Room ID
   // final String roomId;
 
@@ -26,7 +23,7 @@ class ParticipantModel {
   /// Example: ["halal", "vegetarian"]
   final List<String> dietaryRestrictions;
 
-  ParticipantModel({
+  PreferencesModel({
     List<Map<String, dynamic>>? livePreferences,
     List<String>? defaultPreferences,
     required (int min, int max) budget,
@@ -43,7 +40,7 @@ class ParticipantModel {
   * Serialization / Deserialization
   *----------------------------------------------------*/
 
-  /// Convert ParticipantModel → Firestore JSON
+  /// Convert PreferencesModel → Firestore JSON
   Map<String, dynamic> toJson() => {
         "livePreferences": livePreferences
             .map((pref) => {
@@ -59,11 +56,11 @@ class ParticipantModel {
         "dietaryRestrictions": dietaryRestrictions,
       };
 
-  /// Create ParticipantModel from Firestore JSON
-  factory ParticipantModel.fromJson(Map<String, dynamic> json) {
+  /// Create PreferencesModel from Firestore JSON
+  factory PreferencesModel.fromJson(Map<String, dynamic> json) {
     final budgetJson = json["budget"] ?? {};
 
-    return ParticipantModel(
+    return PreferencesModel(
       // uid: json["uid"],
       // roomId: json["roomId"],
       livePreferences: (json["livePreferences"] as List<dynamic>?)

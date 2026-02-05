@@ -534,51 +534,50 @@ class Coordinator {
 ///
 /// - Calls MapsService.searchRestaurants(query)
 /// - Returns a list of restaurant maps:
-///   { "name", "placeId", "location" }
+///   { "name", "placeId", "lat", "lng" }
 /// - UI should display results and let the user select one
 Future<List<Map<String, dynamic>>> searchRestaurant(String query) async {
-  if (query.isEmpty) return [];
+  final trimmedQuery = query.trim();
+  if (trimmedQuery.isEmpty) return [];
 
-  final results = await mapsService.searchRestaurants(query);
+  final results = await mapsService.searchRestaurants(trimmedQuery);
 
-  // Optionally sort, filter, or limit results before returning
   return results;
 }
 
 /// -----------------------------
 /// Submit Preference
 ///
-/// - Collects live preferences from ParticipantModel
+/// - Collects live preferences from PreferencesModel
 /// - Fetches user default preferences and dietary restrictions from Firestore
-/// - Converts everything into ParticipantModel and updates Firestore room data
+/// - Converts everything into PreferencesModel and updates Firestore room data
 /// - Returns true if success, false otherwise
 Future<bool> submitPreference({
   required String uid,
   required String roomId,
-  required ParticipantModel participant,
+  required PreferencesModel participant,
 }) async {
   try {
-    // Get latest user data for default preferences & dietary restrictions
     final user = await firestoreService.getUser(uid);
 
-    final updatedParticipant = ParticipantModel(
+    final updatedParticipant = PreferencesModel(
       livePreferences: participant.livePreferences,
       defaultPreferences: user?.preferredCuisine ?? [],
       budget: participant.budget,
       dietaryRestrictions: user?.dietaryRestrictions ?? [],
     );
 
-    // Update participant data under the room in Firestore
     await firestoreService.updateRoom(roomId, {
       'participants.$uid': updatedParticipant.toJson(),
     });
 
     return true;
   } catch (e) {
-    print("Error submitting preferences: $e");
+    print('[submitPreference] Failed: $e');
     return false;
   }
 }
+
 
 
 
@@ -609,7 +608,7 @@ Future<bool> submitPreference({
 /// Calls AIService exactly once with participants and returns a user-friendly recommendation.
 /// Optionally fetches place details via MapsService.
 Future<Map<String, dynamic>> generateRecommendation({
-  required List<ParticipantModel> participants,
+  required List<PreferencesModel> participants,
   required AIService aiService,
   MapsService? mapsService, // optional for UI details
 }) async {
