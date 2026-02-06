@@ -10,6 +10,35 @@ import '../models/preferences.dart';
 import 'dart:math';
 import 'package:cloud_firestore/cloud_firestore.dart'; // FieldValue, Timestamp
 
+/// Structured error the UI can catch and branch on.
+/// `stage` uses string tags since the enum was removed.
+class RegisterFailure implements Exception {
+  /// Stage tag: 'createUser' | 'updateProfile' | 'unknown'
+  final String stage;
+  final String code;    // e.g., FirebaseAuthException.code or custom
+  final String message; // human-friendly detail (safe for logs/UX)
+
+  RegisterFailure({
+    required this.stage,
+    required this.code,
+    required this.message,
+  });
+
+  @override
+  String toString() =>
+      'RegisterFailure(stage: $stage, code: $code, message: $message)';
+}
+
+/// Convenience return type for registration.
+class RegistrationResult {
+  final UserCredential credential; // Firebase Auth credential (user is signed-in)
+  final UserModel user;            // Freshly ensured/loaded Firestore user model
+  RegistrationResult({
+    required this.credential,
+    required this.user,
+  });
+}
+
 /// Coordinates multi-service flows for the UI (MVVM-friendly).
 class Coordinator {
   final AuthService _auth;
@@ -17,6 +46,7 @@ class Coordinator {
   final AnalyticsService _analytics; //remove
   final MapsService _maps;
   final RTDBService _rtdb;
+  final AIService _ai;
 
   Coordinator({
     AuthService? auth,
@@ -24,11 +54,13 @@ class Coordinator {
     AnalyticsService? analytics, // remove
     MapsService? maps,
     RTDBService? rtdb,
+    AIService? ai,
   })  : _auth = auth ?? AuthService(),
         _db = db ?? FirestoreService(),
         _analytics = analytics ?? AnalyticsService(),//remove
         _maps = maps ?? MapsService(),
-        _rtdb = rtdb ?? RTDBService();
+        _rtdb = rtdb ?? RTDBService(),
+        _ai = ai ?? AIService();
 
 /* ====================================================================
  * 1. REGISTER
@@ -46,26 +78,6 @@ class Coordinator {
  *    only via updateProfile so that the UI can stage a multi-step flow.
  *  - Analytics is centralized in registerUser to avoid double-logging.
  * ==================================================================== */
-
-
-  /// Structured error the UI can catch and branch on.
-  /// `stage` uses string tags since the enum was removed.
-  class RegisterFailure implements Exception {
-    /// Stage tag: 'createUser' | 'updateProfile' | 'unknown'
-    final String stage;
-    final String code;    // e.g., FirebaseAuthException.code or custom
-    final String message; // human-friendly detail (safe for logs/UX)
-
-    RegisterFailure({
-      required this.stage,
-      required this.code,
-      required this.message,
-    });
-
-    @override
-    String toString() =>
-        'RegisterFailure(stage: $stage, code: $code, message: $message)';
-  }
 
   // ---------------------------- createUser ----------------------------
 
@@ -121,17 +133,6 @@ class Coordinator {
     // Write the profile (full overwrite; creates the doc if missing)
     await _db.replaceUser(fresh);
     return fresh;
-  }
-
-
-  /// Convenience return type for registration.
-  class RegistrationResult {
-    final UserCredential credential; // Firebase Auth credential (user is signed-in)
-    final UserModel user;            // Freshly ensured/loaded Firestore user model
-    RegistrationResult({
-      required this.credential,
-      required this.user,
-    });
   }
 
   // --------------------------- registerUser ---------------------------
@@ -646,18 +647,28 @@ Future<bool> submitPreference({
   required PreferencesModel preferences,
 }) async {
   try {
-    //Fetch user defaults
+    //Fetch user defaults from Firestore
     final user = await _db.getUser(uid);
 
-    //Merge live + default preferences (originally from different table)
+    // Merge live + default preferences
     final mergedPreferences = PreferencesModel(
-      livePreferences: preferences.livePreferences,
-      defaultPreferences: user?.preferredCuisine ?? [],
+      roomId: roomId,
+      livePreferences: [
+        for (var p in preferences.livePreferences)
+          Map<String, dynamic>.from(p) // defensive copy
+      ],
+      preferredCuisine: {
+        ...preferences.preferredCuisine,
+        ...(user?.preferredCuisine ?? []),
+      }.toList(),
       budget: preferences.budget,
-      dietaryRestrictions: user?.dietaryRestrictions ?? [],
+      dietaryRestrictions: {
+        ...preferences.dietaryRestrictions,
+        ...(user?.dietaryRestrictions ?? []),
+      }.toList(),
     );
 
-    //Store preferences (composite key: room + user)
+    // Store preferences in Firestore (composite key: room + user)
     await _db.setPreferences(
       roomId: roomId,
       uid: uid,
@@ -668,7 +679,7 @@ Future<bool> submitPreference({
       },
     );
 
-    //Mark participant as submitted in RTDB
+    // Mark participant as submitted in RTDB
     await _rtdb.setParticipantSubmitted(
       roomId: roomId,
       uid: uid,
@@ -677,10 +688,10 @@ Future<bool> submitPreference({
 
     return true;
   } catch (e, st) {
-    print('[submitPreference] Failed: $e\n$st');
-    return false;
+    throw Exception('[submitPreference] Failed: $e\n$st');
   }
 }
+
 
 /* ====================================================================
  * 6. RECOMMENDATION
@@ -704,7 +715,7 @@ Future<bool> submitPreference({
 /// - Reads preferences from Firestore
 /// - Sends to AI service
 /// - Does NOT touch RTDB
-Future<Map<String, dynamic>> generateRecommendation({
+Future<Map<String, String>> generateRecommendation({
   required String roomId,
 }) async {
   // Fetch all preferences for the room
@@ -714,13 +725,17 @@ Future<Map<String, dynamic>> generateRecommendation({
     throw Exception('No preferences submitted for room $roomId');
   }
 
-  // Convert to PreferencesModel list
-  final preferences = prefList.map((p) => PreferencesModel.fromJson(p)).toList();
+  // Convert Firestore data to PreferencesModel list
+  final preferences = prefList
+      .map((p) => PreferencesModel.fromJson(p))
+      .toList();
 
   // Call AI service
-  final result = await _ai.generateRecommendation(preferences);
+  final result = await _ai.sendPreferencesData(participants: preferences);
+
   return result;
 }
+
 
 /// -----------------------------
 /// storeRecommendation
@@ -828,7 +843,7 @@ Future<void> updateProfile({required UserModel updated}) async {
 /// Sends a password reset email to [email].
 Future<void> resetPassword(String email) async {
   try {
-      await _auth.sendPasswordResetEmail(email.trim());
+      await _auth.resetPassword(email.trim());
     } catch (e) {
       throw Exception('Failed to reset password: $e');
     }
@@ -851,7 +866,7 @@ Future<void> resetPassword(String email) async {
 
 /// Deletes the currently signed-in user's account and all associated Firestore data.
 Future<void> deleteAccount() async {
-  final user = _auth._auth.currentUser;
+  final user = _auth.currentUser;
 
   if (user == null) {
     // Ensure there is a signed-in user before attempting deletion

@@ -1,71 +1,31 @@
-import 'dart:async';
 import 'dart:convert';
-import 'dart:html';
+import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:http/http.dart' as http;
-import 'package:google_maps/google_maps.dart' as gmaps;
+import 'package:url_launcher/url_launcher.dart';
+import '../config.dart'; // Make sure Config.serverBaseUrl exists
 
 /// MapsService
 ///
-/// Handles all Google Maps functionality for the client-side web app (UI).
-/// This service **does not contain any API keys**.
-/// All Google Maps Web API calls are handled by the server.
-///
-/// ----------------------------
-/// USAGE / FUNCTION GUIDE
-/// ----------------------------
-/// 1. Initialize the map on page load:
-///    `initMap(mapElementId)`
-///
-/// 2. User searches for restaurants:
-///    `searchRestaurants(query)`
-///    - Calls server endpoint
-///    - Returns a list of { name, placeId, lat, lng }
-///    - **Called when user types a search query in UI**
-///
-/// 3. Show AI recommendation:
-///    `showAIRecommendation(recommendedPlaceId)`
-///    - Fetches full place details from the server using placeId
-///    - Adds a marker to the map and centers it
-///    - **Called when AI sends back recommendedPlaceId**
-///
-/// 4. Get full place details from server (internal for AI recommendation):
-///    `getPlaceDetails(placeId)`
-///    - Calls server endpoint `/maps/place/{placeId}`
-///    - Returns lat/lng and optional name
-///
-/// ----------------------------
-/// NOTES
-/// ----------------------------
-/// - This file NEVER calls Google Maps Web APIs
-/// - This file NEVER uses an API key
-/// - Server decides WHAT data to return
-/// - Client decides HOW to display it
-
+/// Handles all Google Maps functionality for Flutter (Web / Mobile).
+/// This service does NOT contain any API keys. All API calls are handled by the server.
 class MapsService {
-  gmaps.GMap? _map;
-  final List<gmaps.Marker> _markers = [];
+  final String serverBaseUrl;
 
-  final String serverBaseUrl; // e.g. https://your-server.com
+  // Markers are now tracked here to build Flutter widgets
+  final Set<Marker> markers = {};
 
-  MapsService({required this.serverBaseUrl});
+  MapsService({String? serverUrl})
+      : serverBaseUrl = serverUrl ?? Config.serverBaseUrl;
 
   /// ----------------------------
-  /// MAP INITIALIZATION (UI)
+  /// INITIAL CAMERA POSITION
   /// ----------------------------
-  void initMap(
-    String mapElementId, {
+  CameraPosition getInitialCamera({
     double lat = 3.1390,
     double lng = 101.6869,
-    int zoom = 12,
+    double zoom = 12,
   }) {
-    final mapOptions = gmaps.MapOptions()
-      ..center = gmaps.LatLng(lat, lng)
-      ..zoom = zoom;
-
-    _map = gmaps.GMap(
-      document.getElementById(mapElementId)!,
-      mapOptions,
-    );
+    return CameraPosition(target: LatLng(lat, lng), zoom: zoom);
   }
 
   /// ----------------------------
@@ -85,15 +45,18 @@ class MapsService {
       if (response.statusCode != 200) return [];
 
       final data = jsonDecode(response.body) as List<dynamic>;
-
       _clearMarkers();
 
-      final results = data.map<Map<String, dynamic>>((e) {
+      return data.map<Map<String, dynamic>>((e) {
         final lat = e["lat"];
         final lng = e["lng"];
         final name = e["name"] ?? "";
 
-        _addMarker(lat, lng, name);
+        _addMarker(
+          markerId: e["placeId"],
+          position: LatLng(lat, lng),
+          title: name,
+        );
 
         return {
           "name": name,
@@ -102,8 +65,6 @@ class MapsService {
           "lng": lng,
         };
       }).toList();
-
-      return results;
     } catch (e) {
       print("[ERROR] searchRestaurants failed: $e");
       return [];
@@ -111,14 +72,12 @@ class MapsService {
   }
 
   /// ----------------------------
-  /// SHOW AI RECOMMENDATION (SERVER-SIDE)
+  /// SHOW AI RECOMMENDATION
   /// ----------------------------
   Future<void> showAIRecommendation({
     required String recommendedPlaceId,
     String placeNameFallback = "AI Recommendation",
   }) async {
-    if (_map == null) return;
-
     _clearMarkers();
 
     final details = await getPlaceDetails(recommendedPlaceId);
@@ -128,10 +87,11 @@ class MapsService {
     final lng = details["lng"];
     final name = details["name"] ?? placeNameFallback;
 
-    _addMarker(lat, lng, name);
-    _map!
-      ..center = gmaps.LatLng(lat, lng)
-      ..zoom = 15;
+    _addMarker(
+      markerId: recommendedPlaceId,
+      position: LatLng(lat, lng),
+      title: name,
+    );
   }
 
   /// ----------------------------
@@ -158,32 +118,37 @@ class MapsService {
   }
 
   /// ----------------------------
-  /// PRIVATE UI FUNCTIONS
+  /// PRIVATE: MARKERS
   /// ----------------------------
-  void _addMarker(double lat, double lng, String title) {
-    final position = gmaps.LatLng(lat, lng);
-
-    final marker = gmaps.Marker(
-      gmaps.MarkerOptions()
-        ..position = position
-        ..map = _map
-        ..title = title
-        ..clickable = true,
+  void _addMarker({
+    required String markerId,
+    required LatLng position,
+    required String title,
+  }) {
+    markers.add(
+      Marker(
+        markerId: MarkerId(markerId),
+        position: position,
+        infoWindow: InfoWindow(title: title),
+        onTap: () => _launchUrl(
+            "https://www.google.com/maps/search/?api=1&query=${position.latitude},${position.longitude}"),
+      ),
     );
-
-    marker.onClick.listen((_) {
-      final url =
-          "https://www.google.com/maps/search/?api=1&query=$lat,$lng";
-      window.open(url, "_blank");
-    });
-
-    _markers.add(marker);
   }
 
   void _clearMarkers() {
-    for (final marker in _markers) {
-      marker.map = null;
+    markers.clear();
+  }
+
+  /// ----------------------------
+  /// HELPER: OPEN URL
+  /// ----------------------------
+  Future<void> _launchUrl(String url) async {
+    final uri = Uri.parse(url);
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri);
+    } else {
+      print("Could not launch $url");
     }
-    _markers.clear();
   }
 }

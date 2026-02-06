@@ -40,6 +40,9 @@ class AuthService {
   // FirebaseAuth instance for interacting with Firebase Authentication
   final FirebaseAuth _auth = FirebaseAuth.instance;
 
+  // Expose the currently signed-in user
+  User? get currentUser => _auth.currentUser;
+  
   /// Stream of authentication state changes.
   /// Emits a User object when signed in, or null when signed out.
   Stream<User?> authStateChanges() {
@@ -67,5 +70,13 @@ class AuthService {
   /// Signs the current user out.
   Future<void> signOut() {
     return _auth.signOut();
+  }
+
+  Future<void> resetPassword(String email) async {
+    try {
+      await _auth.sendPasswordResetEmail(email: email.trim());
+    } catch (e) {
+      throw Exception('Failed to reset password: $e');
+    }
   }
 }

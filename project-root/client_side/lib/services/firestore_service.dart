@@ -4,6 +4,7 @@ import '../models/user.dart'; // adjust the relative path to your UserModel
 /// FirestoreService centralizes reads/writes for Firestore.
 /// - Users: Strongly typed via `UserModel`.
 /// - Rooms: Dictionary-first (Map<String, dynamic>), no dedicated model.
+/// - Preferences: Stores user preferences per room.
 class FirestoreService {
   // Singleton pattern (kept from your original)
   static final FirestoreService _instance = FirestoreService._internal();
@@ -27,7 +28,7 @@ class FirestoreService {
       user.toJson(),
       SetOptions(merge: true),
     );
-  } 
+  }
 
   /// Fetch a user document once and deserialize to `UserModel`.
   /// Returns null if the document doesn't exist.
@@ -40,7 +41,7 @@ class FirestoreService {
 
     // Note: `uid` is supplied externally (doc id), consistent with your model.
     return UserModel.fromJson(data, snap.id);
-  } 
+  }
 
   /// Real-time stream of a user as `UserModel?`.
   /// Emits null if the document is deleted.
@@ -51,19 +52,19 @@ class FirestoreService {
       if (data == null) return null;
       return UserModel.fromJson(data, snap.id);
     });
-  } 
+  }
 
   /// Partial update to arbitrary user fields.
   /// Example: updateUserFields(uid, {'username': 'newName'})
   Future<void> updateUserFields(String uid, Map<String, dynamic> fields) async {
     await _userDoc(uid).update(fields);
-  } 
+  }
 
   /// Replace the whole user document with the serialized `UserModel`.
   /// Be cautious: this *overwrites* fields that are not present in `toJson()`.
   Future<void> replaceUser(UserModel user) async {
     await _userDoc(user.uid).set(user.toJson());
-  } 
+  }
 
   /// List helpers:
   /// Append items to list fields with arrayUnion (deduplicates on server).
@@ -81,7 +82,7 @@ class FirestoreService {
     }
     if (update.isEmpty) return;
     await _userDoc(uid).update(update);
-  } 
+  }
 
   /// Remove items from list fields with arrayRemove.
   Future<void> removeUserListItems({
@@ -98,7 +99,7 @@ class FirestoreService {
     }
     if (update.isEmpty) return;
     await _userDoc(uid).update(update);
-  } 
+  }
 
   /// Transaction example for advanced, consistent updates (optional).
   /// Useful if you need to read-modify-write with invariants.
@@ -122,7 +123,13 @@ class FirestoreService {
       final updated = transform(current);
       tx.set(ref, updated.toJson(), SetOptions(merge: true));
     });
-  } 
+  }
+
+/// Deletes a Firestore user document for the given [uid].
+Future<void> deleteUser(String uid) async {
+  await _userDoc(uid).delete();
+}
+
 
   /* ----------------------------- ROOMS ------------------------------ */
   // No RoomModel by design. We use Map<String, dynamic> directly.
@@ -137,35 +144,35 @@ class FirestoreService {
   Future<DocumentReference<Map<String, dynamic>>> createRoom(
       Map<String, dynamic> data) async {
     return await _roomsCol.add(data);
-  } 
+  }
 
   /// Fetch one room as a dictionary (or null if missing).
   Future<Map<String, dynamic>?> getRoom(String roomId) async {
     final doc = await _roomDoc(roomId).get();
     if (!doc.exists) return null;
     return doc.data();
-  } 
+  }
 
   /// Live updates of a single room as a dictionary.
   Stream<Map<String, dynamic>?> roomStream(String roomId) {
     return _roomDoc(roomId).snapshots().map((doc) => doc.data());
-  } 
+  }
 
   /// Partial update: supply only the fields you want to change.
   Future<void> updateRoom(String roomId, Map<String, dynamic> data) async {
     await _roomDoc(roomId).update(data);
-  } 
+  }
 
   /// Replace the whole room document (be careful—overwrites).
   Future<void> setRoom(String roomId, Map<String, dynamic> data,
       {bool merge = true}) async {
     await _roomDoc(roomId).set(data, SetOptions(merge: merge));
-  } 
+  }
 
   /// Delete a room.
   Future<void> deleteRoom(String roomId) async {
     await _roomDoc(roomId).delete();
-  } 
+  }
 
   /// Query: All rooms a user belongs to (dictionary list).
   Stream<List<Map<String, dynamic>>> roomsForUser(String uid) {
@@ -173,42 +180,41 @@ class FirestoreService {
         .where('members', arrayContains: uid)
         .snapshots()
         .map((snapshot) => snapshot.docs.map((d) => d.data()).toList());
-  } 
+  }
+
+  /* ----------------------------- PREFERENCES ------------------------------ */
+
+  CollectionReference<Map<String, dynamic>> get _preferencesCol =>
+      _db.collection('preferences');
+
+  DocumentReference<Map<String, dynamic>> _preferenceDoc(String roomId, String uid) =>
+      _preferencesCol.doc('${roomId}_$uid');
+
+  /// Create or update a preferences document for a user in a room
+  Future<void> setPreferences({
+    required String roomId,
+    required String uid,
+    required Map<String, dynamic> data,
+  }) async {
+    await _preferenceDoc(roomId, uid).set(data, SetOptions(merge: true));
+  }
+
+  /// Fetch preferences for a user in a room
+  Future<Map<String, dynamic>?> getPreferences({
+    required String roomId,
+    required String uid,
+  }) async {
+    final snap = await _preferenceDoc(roomId, uid).get();
+    if (!snap.exists) return null;
+    return snap.data();
+  }
+
+  /// Fetch all preferences for a room
+  Future<List<Map<String, dynamic>>> getAllPreferencesForRoom(String roomId) async {
+    final query = await _preferencesCol
+        .where('room_id', isEqualTo: roomId)
+        .get();
+
+    return query.docs.map((d) => d.data()).toList();
+  }
 }
-
-/* ----------------------------- PREFERENCES ------------------------------ */
-
-CollectionReference<Map<String, dynamic>> get _preferencesCol =>
-    _db.collection('preferences');
-
-DocumentReference<Map<String, dynamic>> _preferenceDoc(String roomId, String uid) =>
-    _preferencesCol.doc('${roomId}_$uid');
-
-/// Create or update a preferences document for a user in a room
-Future<void> setPreferences({
-  required String roomId,
-  required String uid,
-  required Map<String, dynamic> data,
-}) async {
-  await _preferenceDoc(roomId, uid).set(data, SetOptions(merge: true));
-}
-
-/// Fetch preferences for a user in a room
-Future<Map<String, dynamic>?> getPreferences({
-  required String roomId,
-  required String uid,
-}) async {
-  final snap = await _preferenceDoc(roomId, uid).get();
-  if (!snap.exists) return null;
-  return snap.data();
-}
-
-/// Fetch all preferences for a room
-Future<List<Map<String, dynamic>>> getAllPreferencesForRoom(String roomId) async {
-  final query = await _preferencesCol
-      .where('room_id', isEqualTo: roomId)
-      .get();
-
-  return query.docs.map((d) => d.data()).toList();
-}
-``

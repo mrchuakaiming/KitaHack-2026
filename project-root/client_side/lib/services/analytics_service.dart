@@ -1,5 +1,4 @@
 import 'package:firebase_analytics/firebase_analytics.dart';
-import 'package:firebase_analytics/observer.dart';
 
 // HOW TO USE?
 /*
@@ -29,7 +28,7 @@ class AnalyticsService {
   /// Logs a generic event with optional parameters.
   /// name: the unique event name, e.g., 'login_success'
   /// params: a map of key-value pairs describing the event
-  Future<void> logEvent(String name, {Map<String, dynamic>? params}) async {
+  Future<void> logEvent(String name, {Map<String, Object>? params}) async {
     await _analytics.logEvent(name: name, parameters: params);
   }
 
@@ -45,7 +44,7 @@ class AnalyticsService {
 
   /// Logs when a user views a page
   Future<void> logPageView({required String pageName}) async {
-    await _analytics.logEvent('page_view', params: {'page': pageName});
+    await _analytics.logEvent(name:'page_view', parameters: {'page': pageName});
   }
 
   /// Optional: sets the user ID for cross-device analytics
