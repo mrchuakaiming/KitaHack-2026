@@ -86,4 +86,18 @@ class RTDBService {
     // Set server timestamp on disconnect
     participantRef.child('disconnected_at').onDisconnect().set(ServerValue.timestamp);
   }
+
+/// Clears the 'disconnected_at' field for a participant if it exists
+Future<void> clearDisconnectedAt({
+  required String roomId,
+  required String uid,
+}) async {
+  await _rootRef
+      .child('participants')
+      .child(roomId)
+      .child(uid)
+      .child('disconnected_at')
+      .remove();
+}
+
 }

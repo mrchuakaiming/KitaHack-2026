@@ -43,7 +43,6 @@ class RegistrationResult {
 class Coordinator {
   final AuthService _auth;
   final FirestoreService _db;
-  final AnalyticsService _analytics; //remove
   final MapsService _maps;
   final RTDBService _rtdb;
   final AIService _ai;
@@ -51,13 +50,11 @@ class Coordinator {
   Coordinator({
     AuthService? auth,
     FirestoreService? db,
-    AnalyticsService? analytics, // remove
     MapsService? maps,
     RTDBService? rtdb,
     AIService? ai,
   })  : _auth = auth ?? AuthService(),
         _db = db ?? FirestoreService(),
-        _analytics = analytics ?? AnalyticsService(),//remove
         _maps = maps ?? MapsService(),
         _rtdb = rtdb ?? RTDBService(),
         _ai = ai ?? AIService();
@@ -564,22 +561,6 @@ class Coordinator {
  *  - No capacity checks, no permission checks, no navigation.
  *  - ViewModel is responsible for deciding the user flow.
  * ==================================================================== */
-  /// Clears the 'disconnected_at' field for a participant (if it exists).
-  /// RTDB semantics: setting a child to null removes that field.
-  ///
-  /// Path: participants/{roomId}/{uid}/disconnected_at
-  Future<void> clearDisconnectedAt({
-    required String roomId,
-    required String uid,
-  }) async {
-    await _rootRef
-        .child('participants')
-        .child(roomId)
-        .child(uid)
-        .child('disconnected_at')
-        .remove();
-  }
-
 /// This function performs the following steps:
 /// 1. Validates the room ID and fetches the room document from Firestore (`rooms/{roomId}`):
 ///    - Determines if the user is the host (`room['host_uid'] == uid`) or a non-host.
