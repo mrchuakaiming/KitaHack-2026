@@ -785,52 +785,6 @@ Future<void> wantResult({
 }
 
 /* ====================================================================
- * 8. UPDATE PROFILE
- * --------------------------------------------------------------------
- * This section handles updating mutable user profile fields.
- *
- * Design notes:
- *  - Users can change:
- *      * username
- *      * dietaryRestrictions
- *      * preferredCuisine (default cuisine preferences)
- *  - Email and uid are immutable
- *  - Updates Firestore only via UserModel serialization
- *  - Errors are wrapped in application-level exceptions
- * ==================================================================== */
-
-/// Updates the currently signed-in user's profile in Firestore.
-/// Discuss this
-Future<void> updateProfile({required UserModel updated}) async {
-  try {
-    // Prepare Firestore fields for partial update.
-    // Trim whitespace and remove any empty strings to avoid storing invalid data.
-    final fields = <String, dynamic>{
-      'username': updated.username.trim(), // Updated username
-      'dietary_restrictions': updated.dietaryRestrictions
-          .map((e) => e.trim())           // Trim each dietary restriction
-          .where((e) => e.isNotEmpty)     // Remove empty strings
-          .toList(growable: false),       // Immutable list for Firestore
-      'preferred_cuisine': updated.preferredCuisine
-          .map((e) => e.trim())           // Trim each cuisine
-          .where((e) => e.isNotEmpty)     // Remove empty strings
-          .toList(growable: false),       // Immutable list for Firestore
-    };
-
-    // Perform the partial update in Firestore using a helper service
-    await FirestoreService().updateUserFields(updated.uid, fields);
-  } on FirebaseException catch (e) {
-    // Firebase-specific errors are caught and rethrown with more context
-    throw Exception(
-      'Failed to update profile (${e.code}): ${e.message}',
-    );
-  } catch (e) {
-    // Catch-all for any unexpected errors
-    throw Exception('Unexpected error while updating profile: $e');
-  }
-}
-
-/* ====================================================================
  * 9. CHANGE PASSWORD
  * --------------------------------------------------------------------
  * This section handles password reset via Firebase Auth.

@@ -11,14 +11,16 @@ import 'package:firebase_database/firebase_database.dart';
 /// participants
 ///   └── {room_id}
 ///        └── {uid}
-///             └── submitted: bool
+///             ├── submitted: bool
+///             └── status: "online"/"offline" (optional)
 ///
 /// ----------------------------
 /// NOTES
 /// ----------------------------
-/// - Runs fully on the client (Flutter Web)
+/// - Runs fully on the client (Flutter Web / mobile)
 /// - Security MUST be enforced via Firebase Realtime Database Rules
 /// - No sensitive logic should live here
+/// - Use `onDisconnect` for auto offline detection
 class RTDBService {
   final DatabaseReference _rootRef;
 
@@ -39,9 +41,7 @@ class RTDBService {
         .child('participants')
         .child(roomId)
         .child(uid)
-        .set({
-      'submitted': submitted,
-    });
+        .update({'submitted': submitted});
   }
 
   /// Get all participants for a room
@@ -61,10 +61,29 @@ class RTDBService {
     required String roomId,
     required String uid,
   }) async {
-    await _rootRef
-        .child('participants')
-        .child(roomId)
-        .child(uid)
-        .remove();
+    await _rootRef.child('participants').child(roomId).child(uid).remove();
+  }
+
+  // ============================
+  // Online / Offline Status
+  // ============================
+
+  /// Set a participant as online with automatic offline detection
+  ///
+  /// Example usage:
+  /// ```
+  /// rtdb.setOnlineStatus(roomId: "room1", uid: "user1");
+  /// ```
+  Future<void> setOnlineStatus({
+    required String roomId,
+    required String uid,
+  }) async {
+    final statusRef = _rootRef.child('participants').child(roomId).child(uid).child('status');
+
+    // Set online immediately
+    await statusRef.set("online");
+
+    // Automatically set offline on disconnect
+    statusRef.onDisconnect().set("offline");
   }
 }
