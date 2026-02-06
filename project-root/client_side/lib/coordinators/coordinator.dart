@@ -557,50 +557,63 @@ class Coordinator {
  * --------------------------------------------------------------------
  * This section contains:
  *
- *   - joinRoom(...) : Fetch room data and emit analytics only
+ *   - joinRoom(...) : Update the necessary tables
+ *   - clearDisconnectedAt(...) : Clears the 'disconnected_at' field for a participant (if it exists)
  *
  * Design notes:
- *  - This method performs NO validation.
  *  - No capacity checks, no permission checks, no navigation.
  *  - ViewModel is responsible for deciding the user flow.
- *  - Analytics is always fired, even if the room does not exist.
  * ==================================================================== */
-  /// Joins a room and determines the caller’s role and submission state.
+  /// Clears the 'disconnected_at' field for a participant (if it exists).
+  /// RTDB semantics: setting a child to null removes that field.
   ///
-  /// This method performs:
-  /// - A Firestore read on `rooms/{roomId}` to validate the room and determine
-  ///   whether the user is the host.
-  /// - A Realtime Database read on `participants/{roomId}/{uid}` to check
-  ///   whether the user has already submitted.
-  /// - Conditional writes to Realtime Database only (no Firestore writes).
-  ///
-  /// ### Role determination
-  /// - **Host**: `room['host_uid'] == uid`
-  /// - **Non-host**: all other users
-  ///
-  /// ### Realtime Database behavior
-  /// - Host:
-  ///   - If joining for the first time, creates
-  ///     `{ submitted: true }` under `participants/{roomId}/{uid}`.
-  /// - Non-host:
-  ///   - If already submitted → no write
-  ///   - If not submitted or missing → ensures
-  ///     `{ submitted: false }` exists
-  ///
-  /// ### Parameters
-  /// - `roomId` : The ID of the room to join (must not be empty or whitespace).
-  /// - `uid`    : The UID of the joining user.
-  ///
-  /// ### Returns
-  /// One of the following string values:
-  /// - `"host"`        : User is the room host
-  /// - `"done_user"`   : Non-host user who has already submitted
-  /// - `"undone_user"` : Non-host user who has not yet submitted
-  ///
-  /// ### Throws
-  /// - `StateError('invalid-room-id')` if `roomId` is empty or whitespace.
-  /// - `StateError('room-not-found')` if the Firestore room does not exist.
-  /// - `FirebaseException` for Firestore or Realtime Database read/write failures.
+  /// Path: participants/{roomId}/{uid}/disconnected_at
+  Future<void> clearDisconnectedAt({
+    required String roomId,
+    required String uid,
+  }) async {
+    await _rootRef
+        .child('participants')
+        .child(roomId)
+        .child(uid)
+        .child('disconnected_at')
+        .remove();
+  }
+
+/// This function performs the following steps:
+/// 1. Validates the room ID and fetches the room document from Firestore (`rooms/{roomId}`):
+///    - Determines if the user is the host (`room['host_uid'] == uid`) or a non-host.
+/// 2. Reads the participant record from Realtime Database (`participants/{roomId}/{uid}`) to determine:
+///    - `submitted`: whether the user has already submitted.
+///    - `disconnected_at`: optional timestamp indicating when the user went offline.
+/// 3. Updates Realtime Database only when necessary:
+///    - **Host**:
+///      - First join: create record `{ submitted: true }` (no `disconnected_at` field)
+///      - Returning with `disconnected_at`: clears the field to reflect the user is online
+///    - **Non-host done user** (already submitted):
+///      - Clears `disconnected_at` if present
+///      - Returns `"done_user"` without modifying `submitted`
+///    - **Non-host undone user** (not yet submitted):
+///      - First join: create record `{ submitted: false }` (no `disconnected_at`)
+///      - Returning with `disconnected_at`: clears the field to reflect the user is online
+///
+/// **Presence lifecycle**:
+/// - Hosts and done users remain permanently visible.
+/// - Undone users appear when online, disappear when offline (`onDisconnect` sets `disconnected_at`), and reappear upon reconnect.
+///
+/// **Parameters**:
+/// - [roomId] (String): The ID of the room to join. Must be non-empty and non-whitespace.
+/// - [uid] (String): The unique ID of the user joining the room.
+///
+/// **Returns**:
+/// - `"host"`: if the user is the host of the room
+/// - `"done_user"`: if the user is a non-host and has already submitted
+/// - `"undone_user"`: if the user is a non-host and has not yet submitted
+///
+/// **Throws**:
+/// - `StateError('invalid-room-id')` if [roomId] is empty or whitespace
+/// - `StateError('room-not-found')` if the room does not exist in Firestore
+/// - `FirebaseException` if Firestore or Realtime Database operations fail
   Future<String> joinRoom({
     required String roomId,
     required String uid,
@@ -610,56 +623,67 @@ class Coordinator {
       throw StateError('invalid-room-id');
     }
 
-    // 1) Firestore read: validate room and discover user type (host or non-host).
-    //    We read data only; no Firestore writes here.
+    // 1) Firestore read: validate room & discover host vs non-host.
     final room = await _db.getRoom(id); // null if room doesn't exist
     if (room == null) {
       throw StateError('room-not-found');
     }
-    final bool isHost = (room['host_uid'] == uid); // Rooms schema via FirestoreService
-    // (Rooms are untyped map-based; host_uid is expected to be present.)  // Firestore read
-    // Supports your schema: { room_id, host_uid, output, createdTime, expiryTime }.
+    final bool isHost = (room['host_uid'] == uid); // Rooms schema field host_uid (map-based)
 
-    // 2) RTDB read: get all participants for this room and inspect current user.
-    //    participants/{roomId}/{uid} -> { submitted: bool }
-    final participants = await _rtdb.getParticipants(id); // Map<String, dynamic>? or null
+    // 2) RTDB read: participants/{roomId}
+    final participants = await _rtdb.getParticipants(id); // Map<String, dynamic>?
     final bool hasRecord = (participants != null) && participants.containsKey(uid);
 
-    // Extract 'submitted' if a record exists; otherwise default to false.
+    // Extract submitted & whether 'disconnected_at' exists.
     bool alreadySubmitted = false;
+    bool hasDisconnectedAt = false;
     if (hasRecord) {
       final val = participants![uid];
       if (val is Map) {
         final s = val['submitted'];
         if (s is bool) alreadySubmitted = s;
+        hasDisconnectedAt = val.containsKey('disconnected_at');
       }
     }
 
-    // 3) Take action (RTDB writes only where needed) and return user type.
+    // 3) Take action in RTDB only when needed.
     if (isHost) {
-      // Host: if first time joining, create RTDB participant record as submitted = true.
+      // Host:
+      // - First join: create record with submitted=true (no disconnected_at)
       if (!hasRecord) {
         await _rtdb.setParticipantSubmitted(
           roomId: id,
           uid: uid,
           submitted: true,
-        );
+        ); // no 'disconnected_at' on creation
+      } else if (hasDisconnectedAt) {
+        // Returning host: clear disconnected_at if it exists
+        await _rtdb.clearDisconnectedAt(roomId: id, uid: uid); // new helper
       }
       return 'host';
     } else {
+      // Non-host:
       if (alreadySubmitted) {
-        // Non-host who already submitted: no-op on RTDB
+        // done_user: do not create/modify submitted flag
+        // If they previously disconnected, clear 'disconnected_at'
+        if (hasRecord && hasDisconnectedAt) {
+          await _rtdb.clearDisconnectedAt(roomId: id, uid: uid); // new helper
+        }
         return 'done_user';
       } else {
-        // Non-host who hasn't submitted:
-        // If there is no record, create with submitted = false (idempotent if created again).
+        // undone_user:
+        // Only if brand-new: create { submitted: false } (no disconnected_at)
         if (!hasRecord) {
           await _rtdb.setParticipantSubmitted(
             roomId: id,
             uid: uid,
             submitted: false,
-          );
+          ); // no 'disconnected_at' on creation
+        } else if (hasDisconnectedAt) {  
+          // Returning undone user who previously disconnected -> clear it  
+          await _rtdb.clearDisconnectedAt(roomId: id, uid: uid);
         }
+        // If they had a record but weren't submitted, we leave it as-is.
         return 'undone_user';
       }
     }
