@@ -12,7 +12,7 @@ import 'package:firebase_database/firebase_database.dart';
 ///   └── {room_id}
 ///        └── {uid}
 ///             ├── submitted: bool
-///             └── status: "online"/"offline" (optional)
+///             └── disconnected_at: timestamp (set by onDisconnect)
 ///
 /// ----------------------------
 /// NOTES
@@ -64,7 +64,6 @@ class RTDBService {
     await _rootRef.child('participants').child(roomId).child(uid).remove();
   }
 
-  //
   // ============================
   // Online / Offline Tracking
   // ============================
@@ -72,7 +71,7 @@ class RTDBService {
   /// Registers onDisconnect hook for a participant
   ///
   /// When the client disconnects (tab closed, lost connection), Firebase
-  /// automatically writes the server timestamp to 'disconnectedAt'.
+  /// automatically writes the server timestamp to 'disconnected_at'.
   /// The server / Cloud Function can then remove non-host, non-done users.
   Future<void> registerOnDisconnect({
     required String roomId,
@@ -82,10 +81,9 @@ class RTDBService {
         _rootRef.child('participants').child(roomId).child(uid);
 
     // Clear any previous disconnect marker (reconnection scenario)
-    await participantRef.child('disconnectedAt').remove();
+    await participantRef.child('disconnected_at').remove();
 
     // Set server timestamp on disconnect
-    participantRef.child('disconnectedAt').onDisconnect().set(ServerValue.timestamp);
+    participantRef.child('disconnected_at').onDisconnect().set(ServerValue.timestamp);
   }
-
 }

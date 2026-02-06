@@ -15,11 +15,15 @@ class RTDBService:
       └── {room_id}
            └── {uid}
                 ├── submitted: bool
-                └── disconnectedAt: timestamp (set by onDisconnect)
+                └── disconnected_at: timestamp (set by onDisconnect)
     """
 
     def __init__(self):
         self.root_ref = db.reference()  # Root reference
+
+    # ============================
+    # Disconnect / Online Tracking
+    # ============================
 
     def register_disconnect(self, room_id: str, uid: str) -> None:
         """
@@ -28,15 +32,22 @@ class RTDBService:
         """
         try:
             participant_ref = self.root_ref.child(f'participants/{room_id}/{uid}')
-            # Clear previous disconnectedAt in case of reconnection
-            participant_ref.child('disconnectedAt').delete()
-            # Set disconnectedAt on client disconnect
+
+            # Remove any previous disconnected_at in case the user reconnected
+            participant_ref.child('disconnected_at').delete()
+
+            # Set disconnected_at timestamp automatically when client disconnects
             participant_ref.on_disconnect().update({
-                'disconnectedAt': db.SERVER_TIMESTAMP
+                'disconnected_at': db.SERVER_TIMESTAMP
             })
+
         except Exception as e:
             print(f"[RTDBService] Failed to register disconnect for {uid}: {e}")
             raise
+
+    # ============================
+    # Participant Management
+    # ============================
 
     def delete_participant(self, room_id: str, uid: str) -> None:
         """

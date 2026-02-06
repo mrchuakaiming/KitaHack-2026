@@ -1,33 +1,36 @@
 # =========================
 # Web framework
 # =========================
-fastapi
-uvicorn[standard]
+fastapi==0.109.0
+uvicorn[standard]==0.23.2
+pydantic==2.6.1
 
 # =========================
 # Environment variables
 # =========================
-python-dotenv
+python-dotenv==1.0.0
 
 # =========================
 # Google APIs
 # =========================
-google-generativeai
-googlemaps
-google-api-core
+google-generativeai==0.2.0
+googlemaps==5.6.0
+google-api-core==2.12.0
 
 # =========================
 # Firebase
 # =========================
-firebase-admin
+firebase-admin==6.3.0
 
 # =========================
 # HTTP requests
 # =========================
-requests
+requests==2.32.0
+httpx==1.4.3  # optional async HTTP support
 
 # =========================
 # Testing
 # =========================
-pytest
-pytest-anyio
+pytest==8.3.2
+pytest-anyio==3.7.0
+pytest-asyncio==0.21.0  # async support for pytest
