@@ -15,7 +15,7 @@
 ///
 /// FIRESTORE JSON SHAPE:
 /// {
-///   "room_id": "<STRING>",
+///   "room_Id": "`<STRING>`",
 ///   "live_preferences": [ { "<key>": <any> }, ... ],
 ///   "preferred_cuisine": [ "<STRING>", ... ],
 ///   "budget": [ <INT_MIN>, <INT_MAX> ],
@@ -23,7 +23,7 @@
 /// }
 class PreferencesModel {
   /// The room this preferences document belongs to.
-  final String room_id;
+  final String roomId;
 
   /// Live, per-room preferences with flexible value types.
   /// Example item: {"spice_level": 3, "sharing": true}
@@ -45,7 +45,7 @@ class PreferencesModel {
   /// - Callers cannot mutate internal state after construction
   /// - Each PreferencesModel instance fully owns its data
   PreferencesModel({
-    required this.room_id,
+    required this.roomId,
     required List<Map<String, dynamic>> livePreferences,
     required List<String> preferredCuisine,
     required List<int> budget,
@@ -67,11 +67,10 @@ class PreferencesModel {
   /// - Data is normalized into a predictable shape
   /// - Budget is always converted into a 2-element list [min, max]
   factory PreferencesModel.fromJson(Map<String, dynamic> json) {
-    final room_id = (json['room_id'] ?? '').toString();
+    final roomId = (json['room_Id'] ?? '').toString();
 
     final livePreferences = (json['live_preferences'] as List? ?? [])
-        .map<Map<String, dynamic>>((e) =>
-            e is Map ? Map<String, dynamic>.from(e as Map) : <String, dynamic>{})
+        .map<Map<String, dynamic>>((e) => Map<String, dynamic>.from(e))
         .toList();
 
     final preferredCuisine = (json['preferred_cuisine'] as List? ?? [])
@@ -103,7 +102,7 @@ class PreferencesModel {
         .toList();
 
     return PreferencesModel(
-      room_id: room_id,
+      roomId: roomId,
       livePreferences: livePreferences,
       preferredCuisine: preferredCuisine,
       budget: budget,
@@ -116,7 +115,7 @@ class PreferencesModel {
   /// Defensive copies are returned so callers cannot mutate internal state.
   Map<String, dynamic> toJson() {
     return {
-      'room_id': room_id,
+      'room_Id': roomId,
       'live_preferences': livePreferences
           .map((e) => Map<String, dynamic>.from(e))
           .toList(),
@@ -133,14 +132,14 @@ class PreferencesModel {
   /// - All collections are copied, ensuring NO shared references.
   /// - The original instance remains unchanged.
   PreferencesModel copyWith({
-    String? room_id,
+    String? roomId,
     List<Map<String, dynamic>>? livePreferences,
     List<String>? preferredCuisine,
     List<int>? budget,
     List<String>? dietaryRestrictions,
   }) {
     return PreferencesModel(
-      room_id: room_id ?? this.room_id,
+      roomId: roomId ?? this.roomId,
       livePreferences: livePreferences ?? this.livePreferences,
       preferredCuisine: preferredCuisine ?? this.preferredCuisine,
       budget: budget ?? this.budget,
@@ -149,6 +148,7 @@ class PreferencesModel {
     );
   }
 }
+
 
 /*
   /// Get live preferences ready for AI (only entries with both cuisine & placeId)

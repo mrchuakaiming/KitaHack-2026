@@ -172,10 +172,10 @@ class Coordinator {
   /// - username (String, optional, default: '')
   ///   Display name stored in the Firestore user profile.
   ///
-  /// - dietaryRestrictions (List<String>, optional, default: empty list)
+  /// - dietaryRestrictions (List`<String>`, optional, default: empty list)
   ///   Stored in the Firestore profile after trimming and empty-value filtering.
   ///
-  /// - preferredCuisine (List<String>, optional, default: empty list)
+  /// - preferredCuisine (List`<String>`, optional, default: empty list)
   ///   Stored in the Firestore profile after trimming and empty-value filtering.
   ///
   /// ---------------------------------------------------------------------------
@@ -433,7 +433,7 @@ class Coordinator {
   /// Room table schema (on create):
   ///   room_id     : String
   ///   host_uid    : String
-  ///   output      : Map<String, dynamic>  // declared empty on creation
+  ///   output      : Map`<String, dynamic>`  // declared empty on creation
   ///   createdTime : server timestamp
   ///   expiryTime  : createdTime + 6 hours (computed client-side)
   ///
@@ -573,7 +573,7 @@ class Coordinator {
   ///  - uid    (String, required)
   ///
   /// OUTPUT
-  ///  - Returns Map<String, dynamic>? (raw room data or null)
+  ///  - Returns Map`<String, dynamic>`? (raw room data or null)
   ///
   /// RESPONSIBILITY
   ///  - Data fetch + analytics ONLY
@@ -800,6 +800,7 @@ Future<void> wantResult({
  * ==================================================================== */
 
 /// Updates the currently signed-in user's profile in Firestore.
+/// Discuss this
 Future<void> updateProfile({required UserModel updated}) async {
   try {
     // Prepare Firestore fields for partial update.
