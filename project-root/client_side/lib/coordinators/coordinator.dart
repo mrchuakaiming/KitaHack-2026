@@ -565,40 +565,104 @@ class Coordinator {
  *  - ViewModel is responsible for deciding the user flow.
  *  - Analytics is always fired, even if the room does not exist.
  * ==================================================================== */
-
-  /// Fetches room data from Firestore and logs a join attempt.
+  /// Joins a room and determines the caller’s role and submission state.
   ///
-  /// INPUT
-  ///  - roomId (String, required)
-  ///  - uid    (String, required)
+  /// This method performs:
+  /// - A Firestore read on `rooms/{roomId}` to validate the room and determine
+  ///   whether the user is the host.
+  /// - A Realtime Database read on `participants/{roomId}/{uid}` to check
+  ///   whether the user has already submitted.
+  /// - Conditional writes to Realtime Database only (no Firestore writes).
   ///
-  /// OUTPUT
-  ///  - Returns Map`<String, dynamic>`? (raw room data or null)
+  /// ### Role determination
+  /// - **Host**: `room['host_uid'] == uid`
+  /// - **Non-host**: all other users
   ///
-  /// RESPONSIBILITY
-  ///  - Data fetch + analytics ONLY
-  ///  - No checks, no side effects
-  Future<Map<String, dynamic>?> joinRoom({
+  /// ### Realtime Database behavior
+  /// - Host:
+  ///   - If joining for the first time, creates
+  ///     `{ submitted: true }` under `participants/{roomId}/{uid}`.
+  /// - Non-host:
+  ///   - If already submitted → no write
+  ///   - If not submitted or missing → ensures
+  ///     `{ submitted: false }` exists
+  ///
+  /// ### Parameters
+  /// - `roomId` : The ID of the room to join (must not be empty or whitespace).
+  /// - `uid`    : The UID of the joining user.
+  ///
+  /// ### Returns
+  /// One of the following string values:
+  /// - `"host"`        : User is the room host
+  /// - `"done_user"`   : Non-host user who has already submitted
+  /// - `"undone_user"` : Non-host user who has not yet submitted
+  ///
+  /// ### Throws
+  /// - `StateError('invalid-room-id')` if `roomId` is empty or whitespace.
+  /// - `StateError('room-not-found')` if the Firestore room does not exist.
+  /// - `FirebaseException` for Firestore or Realtime Database read/write failures.
+  Future<String> joinRoom({
     required String roomId,
     required String uid,
   }) async {
-    // 1. Fetch room data
-    final roomData = await _db.getRoom(roomId);
+    final id = roomId.trim();
+    if (id.isEmpty) {
+      throw StateError('invalid-room-id');
+    }
 
-    // 2. Log analytics (non-fatal)
-    try {
-      await _analytics.logEvent(
-        'join_room_attempt',
-        params: {
-          'room_id': roomId,
-          'user_id': uid,
-          'room_exists': roomData != null,
-        },
-      );
-    } catch (_) {/* non-fatal */}
+    // 1) Firestore read: validate room and discover user type (host or non-host).
+    //    We read data only; no Firestore writes here.
+    final room = await _db.getRoom(id); // null if room doesn't exist
+    if (room == null) {
+      throw StateError('room-not-found');
+    }
+    final bool isHost = (room['host_uid'] == uid); // Rooms schema via FirestoreService
+    // (Rooms are untyped map-based; host_uid is expected to be present.)  // Firestore read
+    // Supports your schema: { room_id, host_uid, output, createdTime, expiryTime }.
 
-    // 3. Return raw room data
-    return roomData;
+    // 2) RTDB read: get all participants for this room and inspect current user.
+    //    participants/{roomId}/{uid} -> { submitted: bool }
+    final participants = await _rtdb.getParticipants(id); // Map<String, dynamic>? or null
+    final bool hasRecord = (participants != null) && participants.containsKey(uid);
+
+    // Extract 'submitted' if a record exists; otherwise default to false.
+    bool alreadySubmitted = false;
+    if (hasRecord) {
+      final val = participants![uid];
+      if (val is Map) {
+        final s = val['submitted'];
+        if (s is bool) alreadySubmitted = s;
+      }
+    }
+
+    // 3) Take action (RTDB writes only where needed) and return user type.
+    if (isHost) {
+      // Host: if first time joining, create RTDB participant record as submitted = true.
+      if (!hasRecord) {
+        await _rtdb.setParticipantSubmitted(
+          roomId: id,
+          uid: uid,
+          submitted: true,
+        );
+      }
+      return 'host';
+    } else {
+      if (alreadySubmitted) {
+        // Non-host who already submitted: no-op on RTDB
+        return 'done_user';
+      } else {
+        // Non-host who hasn't submitted:
+        // If there is no record, create with submitted = false (idempotent if created again).
+        if (!hasRecord) {
+          await _rtdb.setParticipantSubmitted(
+            roomId: id,
+            uid: uid,
+            submitted: false,
+          );
+        }
+        return 'undone_user';
+      }
+    }
   }
 
 
