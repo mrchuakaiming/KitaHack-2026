@@ -64,26 +64,28 @@ class RTDBService {
     await _rootRef.child('participants').child(roomId).child(uid).remove();
   }
 
+  //
   // ============================
-  // Online / Offline Status
+  // Online / Offline Tracking
   // ============================
 
-  /// Set a participant as online with automatic offline detection
+  /// Registers onDisconnect hook for a participant
   ///
-  /// Example usage:
-  /// ```
-  /// rtdb.setOnlineStatus(roomId: "room1", uid: "user1");
-  /// ```
-  Future<void> setOnlineStatus({
+  /// When the client disconnects (tab closed, lost connection), Firebase
+  /// automatically writes the server timestamp to 'disconnectedAt'.
+  /// The server / Cloud Function can then remove non-host, non-done users.
+  Future<void> registerOnDisconnect({
     required String roomId,
     required String uid,
   }) async {
-    final statusRef = _rootRef.child('participants').child(roomId).child(uid).child('status');
+    final participantRef =
+        _rootRef.child('participants').child(roomId).child(uid);
 
-    // Set online immediately
-    await statusRef.set("online");
+    // Clear any previous disconnect marker (reconnection scenario)
+    await participantRef.child('disconnectedAt').remove();
 
-    // Automatically set offline on disconnect
-    statusRef.onDisconnect().set("offline");
+    // Set server timestamp on disconnect
+    participantRef.child('disconnectedAt').onDisconnect().set(ServerValue.timestamp);
   }
+
 }

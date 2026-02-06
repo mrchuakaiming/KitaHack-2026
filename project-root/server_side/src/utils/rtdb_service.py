@@ -8,34 +8,54 @@ from firebase_admin import db
 
 class RTDBService:
     """
-    Minimal RTDB service for online presence tracking and room cleanup.
+    Minimal RTDB service for participant tracking and auto-cleanup.
+
+    Structure follows client-side RTDB:
+    participants
+      └── {room_id}
+           └── {uid}
+                ├── submitted: bool
+                └── disconnectedAt: timestamp (set by onDisconnect)
     """
 
     def __init__(self):
         self.root_ref = db.reference()  # Root reference
 
-    def set_user_online(self, room_id: str, uid: str) -> None:
+    def register_disconnect(self, room_id: str, uid: str) -> None:
         """
-        Mark a user as online in a room.
-        This is mostly updated by client heartbeats or presence listener.
+        Registers an onDisconnect marker for a participant.
+        The client calls this via 'leaveRoom' function in Coordinator.
         """
         try:
-            ref = self.root_ref.child(f'rooms/{room_id}/participants/{uid}')
-            # Write online timestamp
-            ref.set({'last_seen': db.SERVER_TIMESTAMP})
-            # Automatically remove when client disconnects
-            ref.on_disconnect().remove()
+            participant_ref = self.root_ref.child(f'participants/{room_id}/{uid}')
+            # Clear previous disconnectedAt in case of reconnection
+            participant_ref.child('disconnectedAt').delete()
+            # Set disconnectedAt on client disconnect
+            participant_ref.on_disconnect().update({
+                'disconnectedAt': db.SERVER_TIMESTAMP
+            })
         except Exception as e:
-            print(f"[RTDBService] Failed to set user online: {e}")
+            print(f"[RTDBService] Failed to register disconnect for {uid}: {e}")
+            raise
+
+    def delete_participant(self, room_id: str, uid: str) -> None:
+        """
+        Deletes a single participant from a room.
+        Server can call this if participant is offline and not host/done.
+        """
+        try:
+            self.root_ref.child(f'participants/{room_id}/{uid}').delete()
+        except Exception as e:
+            print(f"[RTDBService] Failed to delete participant {uid}: {e}")
             raise
 
     def delete_room(self, room_id: str) -> None:
         """
-        Delete all participants for a room.
-        Can be called by Cloud Functions when room expires.
+        Deletes all participants in a room.
+        Typically called when room expires.
         """
         try:
-            self.root_ref.child(f'rooms/{room_id}').delete()
+            self.root_ref.child(f'participants/{room_id}').delete()
         except Exception as e:
-            print(f"[RTDBService] Failed to delete room: {e}")
+            print(f"[RTDBService] Failed to delete room {room_id}: {e}")
             raise

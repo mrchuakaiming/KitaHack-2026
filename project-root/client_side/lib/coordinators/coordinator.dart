@@ -692,9 +692,42 @@ Future<bool> submitPreference({
   }
 }
 
+/* ====================================================================
+ * 6. LEAVE ROOM
+ * --------------------------------------------------------------------
+ * This section contains:
+ *
+ *   - leaveRoom(...) : Handles participant leaving a room
+ *
+ * Design notes:
+ *  - Removes participant from RTDB participants table if they are not host and not done.
+ *  - Should be called from Coordinator (UI triggers).
+ *  - Uses RTDBService public getter `rootRef` for database access.
+ * ==================================================================== */
+
+// -----------------------------
+/// leaveRoom
+///
+/// - Registers the participant for onDisconnect handling in RTDB
+/// - VM simply calls this function; no checks for host/done here
+/// - Does NOT touch Firestore user document
+Future<void> leaveRoom({
+  required String roomId,
+  required String uid,
+}) async {
+  try {
+    await _rtdb.registerOnDisconnect(
+      roomId: roomId,
+      uid: uid,
+    );
+  } catch (e) {
+    throw('[ERROR] Failed to register leaveRoom for $uid: $e');
+  }
+}
+
 
 /* ====================================================================
- * 6. RECOMMENDATION
+ * 7. RECOMMENDATION
  * --------------------------------------------------------------------
  * This section contains:
  *

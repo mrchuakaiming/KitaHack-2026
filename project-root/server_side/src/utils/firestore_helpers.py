@@ -7,9 +7,9 @@ from firebase_admin import firestore
 class FirestoreService:
     """
     Minimal server-side Firestore service.
-    Only handles:
-      - Fetching room for AI context
-      - Deleting expired rooms/users
+    Handles:
+      - Fetching rooms for AI or cleanup
+      - Deleting expired rooms, preferences, users
     """
 
     def __init__(self):
@@ -21,9 +21,24 @@ class FirestoreService:
         doc = self.db.collection('rooms').document(room_id).get()
         return doc.to_dict() if doc.exists else None
 
+    def get_all_rooms(self) -> list[dict]:
+        """Fetch all room documents (used for cleanup)."""
+        rooms = self.db.collection('rooms').stream()
+        return [room.to_dict() for room in rooms]
+
     def delete_room(self, room_id: str):
-        """Delete a room (used when expired)."""
+        """Delete a room document."""
         self.db.collection('rooms').document(room_id).delete()
+
+    # ---------------------------- PREFERENCES ----------------------------
+    def delete_preferences(self, room_id: str):
+        """
+        Delete all preference documents for a room.
+        Assumes preferences are stored with a 'room_id' field.
+        """
+        prefs = self.db.collection('preferences').where('room_id', '==', room_id).stream()
+        for pref in prefs:
+            pref.reference.delete()
 
     # ---------------------------- USERS ----------------------------
     def delete_user(self, uid: str):
