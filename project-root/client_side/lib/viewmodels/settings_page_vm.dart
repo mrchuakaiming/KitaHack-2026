@@ -1,31 +1,54 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+
+// [IMPORT] Business Logic & Services
 import '../coordinators/coordinator.dart';
 import '../models/user.dart';
+import '../services/analytics_service.dart';
 
-/// The ViewModel for the Settings Page.
+/// **ViewModel for Settings & Profile Management**
 ///
-/// **Scope:**
-/// This ViewModel is strictly limited to **Account Mutations**:
-/// 1.  Updating Profile details.
-/// 2.  Resetting Password.
-/// 3.  Deleting the Account.
+/// **Architectural Scope:**
+/// This ViewModel is strictly scoped to **Account Mutations** (Write Operations).
+/// It does **not** manage the "Read" state of the user profile (fetching initial data),
+/// as that is handled by the View (or a separate UserProvider) to keep this logic
+/// focused purely on transactional actions.
 ///
-/// It delegates all business logic to the [Coordinator].
+/// **Responsibilities:**
+/// 1.  **Profile Updates:** Modifying username, cuisines, and dietary restrictions.
+/// 2.  **Security:** Sending password reset emails.
+/// 3.  **Destructive Actions:** Permanently deleting the account.
+/// 4.  **Analytics:** Logging key account lifecycle events.
 class SettingsViewModel extends ChangeNotifier {
   
-  // --- DEPENDENCIES ---
+  // ====================================================================
+  // DEPENDENCIES
+  // ====================================================================
+  
+  /// The Coordinator handles the complex sequence of Firestore/Auth operations.
   final Coordinator _coordinator;
 
-  // --- STATE ---
+  // ====================================================================
+  // STATE PROPERTIES
+  // ====================================================================
+  
+  /// `true` if a network operation (update, delete, email) is in progress.
   bool _isLoading = false;
+
+  /// Holds the latest error message for UI display. `null` if no error.
   String? _errorMessage;
 
-  // --- CONSTRUCTOR ---
+  // ====================================================================
+  // CONSTRUCTOR
+  // ====================================================================
+  
   SettingsViewModel({Coordinator? coordinator}) 
       : _coordinator = coordinator ?? Coordinator();
 
-  // --- GETTERS ---
+  // ====================================================================
+  // GETTERS
+  // ====================================================================
+  
   bool get isLoading => _isLoading;
   String? get errorMessage => _errorMessage;
 
@@ -33,20 +56,20 @@ class SettingsViewModel extends ChangeNotifier {
   // 1. UPDATE PROFILE
   // ====================================================================
 
-  /// Updates the user's mutable profile fields (Username, Cuisines, Dietary).
+  /// Updates the user's mutable profile fields.
   ///
-  /// **Logic:**
-  /// 1.  Identifies the current user via `FirebaseAuth`.
-  /// 2.  Constructs a temporary [UserModel] with the new input data.
-  /// 3.  Delegates the update to [Coordinator.updateProfile].
+  /// **Flow:**
+  /// 1.  Checks if a user is currently logged in.
+  /// 2.  Wraps inputs into a [UserModel].
+  /// 3.  Delegates to [Coordinator.updateProfile].
+  /// 4.  **Analytics:** Logs 'profile_update' on success.
   ///
   /// **Parameters:**
-  /// * [username]: The new display name.
-  /// * [cuisines]: The new list of preferred cuisines.
-  /// * [dietary]: The new list of dietary restrictions.
+  /// * [username]: New display name.
+  /// * [cuisines]: Updated list of food preferences.
+  /// * [dietary]: Updated list of restrictions.
   ///
-  /// **Returns:**
-  /// * `true` if the update was successful.
+  /// **Returns:** `true` if successful.
   Future<bool> updateProfile({
     required String username,
     required List<String> cuisines,
@@ -55,7 +78,7 @@ class SettingsViewModel extends ChangeNotifier {
     _setLoading(true);
     _clearError();
 
-    // Get current UID immediately from Auth since we don't maintain local state
+    // Fail-safe: Ensure we have a UID to update
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) {
       _errorMessage = "You must be logged in to update your profile.";
@@ -64,21 +87,31 @@ class SettingsViewModel extends ChangeNotifier {
     }
 
     try {
-      // Construct a model wrapper to pass data to the Coordinator.
-      // Note: We populate immutable fields (email/hostedRooms) with 
-      // dummy/current data as Coordinator.updateProfile() ignores them.
+      // Construct the model. 
+      // Note: Immutable fields (email/hostedRooms) are ignored by the 
+      // Coordinator's update logic, but required by the Model constructor.
       final updatedModel = UserModel(
         uid: user.uid,
         email: user.email ?? '', 
-        username: username,
+        username: username.trim(),
         preferredCuisine: cuisines,
         dietaryRestrictions: dietary,
-        hostedRooms: [], // Ignored by update logic
+        hostedRooms: [], 
       );
 
-      // DELEGATION
+      // 1. DELEGATION
       await _coordinator.updateProfile(updated: updatedModel);
       
+      // 2. ANALYTICS
+      // Track that the user cares enough to customize their profile
+      await AnalyticsService().logEvent(
+        'profile_update', 
+        params: {
+          'cuisine_count': cuisines.length,
+          'dietary_count': dietary.length,
+        }
+      );
+
       _setLoading(false);
       return true;
 
@@ -93,11 +126,7 @@ class SettingsViewModel extends ChangeNotifier {
   // 2. RESET PASSWORD
   // ====================================================================
 
-  /// Triggers a password reset email for the currently logged-in user.
-  ///
-  /// **Logic:**
-  /// 1.  Retrieves the email from the current Auth session.
-  /// 2.  Delegates to [Coordinator.resetPassword].
+  /// Triggers a password reset email via Firebase Auth.
   Future<void> resetPassword() async {
     _setLoading(true);
     _clearError();
@@ -112,9 +141,11 @@ class SettingsViewModel extends ChangeNotifier {
     }
 
     try {
-      // DELEGATION
+      // 1. DELEGATION
       await _coordinator.resetPassword(email);
-      // Success is silent (no return value expected by UI)
+      
+      // 2. ANALYTICS
+      await AnalyticsService().logEvent('password_reset_request', params: {'source': 'settings'});
 
     } catch (e) {
       _errorMessage = "Failed to send reset email: ${e.toString()}";
@@ -127,43 +158,47 @@ class SettingsViewModel extends ChangeNotifier {
   // 3. DELETE ACCOUNT
   // ====================================================================
 
-  /// Permanently deletes the user's account and data.
+  /// Permanently deletes the user's account and all associated data.
   ///
-  /// **Logic:**
-  /// 1.  Delegates the destructive sequence (Firestore delete -> Auth delete)
-  ///     to [Coordinator.deleteAccount].
+  /// **Flow:**
+  /// 1.  Calls [Coordinator.deleteAccount].
+  /// 2.  **Analytics:** Logs 'account_deleted' immediately before returning.
   ///
   /// **Returns:**
-  /// * `true` if successful (Signal to UI to navigate to Login).
+  /// * `true` if successful (Signal to View to navigate to Login).
   /// * `false` if failed (e.g., requires recent login).
   Future<bool> deleteAccount() async {
     _setLoading(true);
     _clearError();
     
     try {
-      // DELEGATION
+      // 1. DELEGATION (Destructive Action)
       await _coordinator.deleteAccount();
+      
+      // 2. ANALYTICS
+      // Important for churn analysis
+      await AnalyticsService().logEvent('account_deleted');
       
       _setLoading(false);
       return true; 
 
     } catch (e) {
-      // Handles specific errors like 'requires-recent-login' passed from Coordinator
-      _errorMessage = e.toString();
+      // Handles specific errors like 'requires-recent-login'
+      _errorMessage = e.toString().replaceAll("Exception: ", "");
       _setLoading(false);
       return false;
     }
   }
 
-  // --- INTERNAL HELPERS ---
+  // ====================================================================
+  // INTERNAL HELPERS
+  // ====================================================================
 
-  /// Updates the `isLoading` state and notifies the UI to rebuild.
   void _setLoading(bool value) {
     _isLoading = value;
     notifyListeners();
   }
 
-  /// Clears any previous error messages.
   void _clearError() {
     _errorMessage = null;
     notifyListeners();

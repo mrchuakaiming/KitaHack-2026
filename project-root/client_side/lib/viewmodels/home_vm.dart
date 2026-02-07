@@ -1,99 +1,194 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+
+// [IMPORT] Business Logic & Services
 import '../coordinators/coordinator.dart';
 import '../models/user.dart';
 import '../services/firestore_service.dart';
+import '../services/analytics_service.dart';
 
-/// The ViewModel for the Home Dashboard.
+/// **ViewModel for the Home Dashboard**
 ///
-/// **Scope:**
-/// This ViewModel is currently restricted to **Room Creation** only.
+/// **Architectural Role:**
+/// Manages the state and logic for the Home Screen.
 ///
 /// **Responsibilities:**
-/// 1.  **State Management:** Tracks loading state and the list of locally created rooms.
-/// 2.  **Action:** Implements [newRoom] to create a room via the Coordinator.
+/// 1.  **Room Management:** Creating rooms, joining rooms, and fetching hosted rooms.
+/// 2.  **Analytics:** Logs creation and join events.
+/// 3.  **State Management:** Handles loading states, error messaging, and the list of hosted rooms.
 class HomeViewModel extends ChangeNotifier {
   
-  // --- DEPENDENCIES ---
+  // ====================================================================
+  // DEPENDENCIES
+  // ====================================================================
+  
   final Coordinator _coordinator;
   final FirestoreService _db;
 
-  // --- STATE ---
+  // ====================================================================
+  // STATE PROPERTIES
+  // ====================================================================
   
-  /// Stores rooms. Since we don't fetch from DB on init (per instructions),
-  /// this will only contain rooms created during this session.
-  List<String> _hostedRooms = [];
-  
+  /// True while a network operation is in progress.
   bool _isLoading = false;
+
+  /// Holds error messages for UI display.
   String? _errorMessage;
 
-  // --- CONSTRUCTOR ---
+  /// List of room IDs that the current user is hosting.
+  List<String> _hostedRooms = [];
+
+  // ====================================================================
+  // CONSTRUCTOR
+  // ====================================================================
+  
   HomeViewModel({Coordinator? coordinator, FirestoreService? db}) 
       : _coordinator = coordinator ?? Coordinator(),
         _db = db ?? FirestoreService();
 
-  // --- GETTERS ---
-  List<String> get hostedRooms => List.unmodifiable(_hostedRooms);
+  // ====================================================================
+  // GETTERS
+  // ====================================================================
+  
   bool get isLoading => _isLoading;
   String? get errorMessage => _errorMessage;
+  List<String> get hostedRooms => List.unmodifiable(_hostedRooms);
 
   // ====================================================================
-  // NEW ROOM ONLY
+  // 1. INIT / FETCH DATA
   // ====================================================================
 
-  /// Orchestrates the creation of a new room.
-  ///
-  /// **Logic:**
-  /// 1.  Checks Authentication.
-  /// 2.  Fetches current User context.
-  /// 3.  Delegates to [Coordinator.newRoom] (Handles ID Gen, Limits, DB Write).
-  /// 4.  Updates local [_hostedRooms] with the result.
-  ///
-  /// **Returns:**
-  /// * `null`: Success.
-  /// * `String`: Error code ("limit_reached") or message.
-  Future<String?> newRoom() async {
+  /// Fetches the list of rooms hosted by the current user.
+  /// Should be called when the Home Screen initializes.
+  Future<void> fetchHostedRooms() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+
+    // We don't necessarily need to set full page loading for this background fetch,
+    // but for simplicity, we can. Or we can just update the list silently.
+    // Here we'll do it silently to avoid UI jitter, or you can add a separate _isFetchingRooms flag.
+    
+    try {
+      final ids = await _coordinator.getHostedRoomIds(hostUid: user.uid);
+      _hostedRooms = ids;
+      notifyListeners();
+    } catch (e) {
+      // Log error but maybe don't block the whole UI
+      debugPrint("Failed to fetch hosted rooms: $e");
+    }
+  }
+
+  // ====================================================================
+  // 2. CREATE ROOM
+  // ====================================================================
+
+  /// Orchestrates the creation of a new room session.
+  Future<String?> createRoom() async {
     _setLoading(true);
     _clearError();
 
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) {
+      _errorMessage = "You must be logged in.";
       _setLoading(false);
-      return "You must be logged in.";
+      return null;
     }
 
     try {
-      // 1. Get current user model (required for capacity check)
+      // 1. Fetch current User Profile (Required for Host Capacity Check)
       UserModel? currentUserModel = await _db.getUser(user.uid);
       
       if (currentUserModel == null) {
+        _errorMessage = "User profile not found. Please relogin.";
         _setLoading(false);
-        return "User profile not found.";
+        return null;
       }
 
-      // 2. Delegate creation to Coordinator
+      // 2. Delegate Creation to Coordinator
       UserModel updatedUser = await _coordinator.newRoom(currentUser: currentUserModel);
 
-      // 3. Update local state
+      // Extract the new Room ID
+      final newRoomId = updatedUser.hostedRooms.last;
+
+      // 3. Update Local List
       _hostedRooms = updatedUser.hostedRooms;
-      
+
+      // 4. Analytics
+      await AnalyticsService().logRoomCreated(roomId: newRoomId);
+
       _setLoading(false);
-      return null; // Success
+      return newRoomId;
 
     } on StateError catch (e) {
       _setLoading(false);
-      // Map specific coordinator errors to UI codes
       if (e.message == 'host-limit-reached') {
-        return "limit_reached"; 
+        _errorMessage = "You cannot host more than 5 rooms at once.";
+      } else {
+        _errorMessage = e.message;
       }
-      return e.message;
+      return null;
+
     } catch (e) {
       _setLoading(false);
-      return "Failed to create room. Please check your connection.";
+      _errorMessage = "Failed to create room. Please check connection.";
+      return null;
     }
   }
 
-  // --- INTERNAL HELPERS ---
+  // ====================================================================
+  // 3. JOIN ROOM
+  // ====================================================================
+
+  /// Attempts to join an existing room.
+  Future<bool> joinRoom(String roomId) async {
+    _setLoading(true);
+    _clearError();
+
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) {
+      _errorMessage = "You must be logged in.";
+      _setLoading(false);
+      return false;
+    }
+
+    try {
+      final status = await _coordinator.joinRoom(
+        roomId: roomId, 
+        uid: user.uid
+      );
+
+      await AnalyticsService().logEvent(
+        'join_room_success',
+        params: {
+          'room_id': roomId,
+          'role_status': status,
+        }
+      );
+
+      _setLoading(false);
+      return true;
+
+    } on StateError catch (e) {
+      _setLoading(false);
+      if (e.message == 'invalid-room-id') {
+        _errorMessage = "Please enter a valid Room ID.";
+      } else if (e.message == 'room-not-found') {
+        _errorMessage = "Room not found. Please check the code.";
+      } else {
+        _errorMessage = e.message;
+      }
+      return false;
+
+    } catch (e) {
+      _setLoading(false);
+      _errorMessage = "Failed to join room. Please try again.";
+      return false;
+    }
+  }
+
+  // ====================================================================
+  // INTERNAL HELPERS
+  // ====================================================================
 
   void _setLoading(bool value) {
     _isLoading = value;

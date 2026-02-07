@@ -1,59 +1,89 @@
 import 'package:flutter/material.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import '../coordinators/coordinator.dart';
 
-/// The ViewModel for the Password Reset Screen.
+// [IMPORT] Business Logic & Services
+import '../coordinators/coordinator.dart';
+import '../services/analytics_service.dart';
+
+/// **ViewModel for Password Reset**
 ///
-/// This class acts as the bridge between the [ResetPasswordPage] UI and the
-/// business logic in [Coordinator].
+/// This class manages the state and business logic for the [ResetPasswordPage].
+///
+/// **Role in MVVM:**
+/// - **State Holder:** Manages `isLoading`, `isSuccess`, and `errorMessage`.
+/// - **Bridge:** Connects the UI to the [Coordinator] for backend operations.
+/// - **Observer:** Logs analytics events for business intelligence.
 ///
 /// **Responsibilities:**
-/// 1.  **State Management:** Tracks `isLoading`, `isSuccess`, and `errorMessage`.
-/// 2.  **Action Delegation:** Calls [Coordinator.resetPassword].
-/// 3.  **Error Handling:** Catches [RegisterFailure] and formats messages for the UI.
+/// 1.  **Input Validation:** Checks if the email format is valid before sending.
+/// 2.  **Action Delegation:** Calls [Coordinator.resetPassword] to trigger the email.
+/// 3.  **Analytics:** Logs 'password_reset_request' events to track usage.
+/// 4.  **Feedback:** Exposes success/error states for UI alerts.
 class ResetPasswordViewModel extends ChangeNotifier {
   
-  // --- DEPENDENCIES ---
+  // ====================================================================
+  // DEPENDENCIES
+  // ====================================================================
+  
+  /// The Coordinator handles the interaction with Firebase Auth.
   final Coordinator _coordinator;
 
-  // --- STATE ---
+  // ====================================================================
+  // STATE PROPERTIES
+  // ====================================================================
   
-  /// Indicates if the network request is currently active.
+  /// **Loading State**
+  /// `true` when the network request is in flight.
+  /// Used to disable the "Send Email" button and show a progress indicator.
   bool _isLoading = false;
 
-  /// Indicates if the email was successfully sent.
-  /// Used by the View to show a confirmation dialog or navigation.
+  /// **Success State**
+  /// `true` if the reset email was successfully sent.
+  /// Used by the View to show a success dialog or navigate back to Login.
   bool _isSuccess = false;
 
-  /// Stores error messages (e.g., "User not found") for UI display.
+  /// **Error State**
+  /// Contains a human-readable error message if the operation fails.
+  /// `null` if no error has occurred.
   String? _errorMessage;
 
-  // --- CONSTRUCTOR ---
+  // ====================================================================
+  // CONSTRUCTOR
+  // ====================================================================
+  
+  /// Creates the ViewModel with an optional [Coordinator] for dependency injection.
   ResetPasswordViewModel({Coordinator? coordinator}) 
       : _coordinator = coordinator ?? Coordinator();
 
-  // --- GETTERS ---
+  // ====================================================================
+  // GETTERS
+  // ====================================================================
+  
   bool get isLoading => _isLoading;
   bool get isSuccess => _isSuccess;
   String? get errorMessage => _errorMessage;
 
-  // --- FUNCTIONS ---
+  // ====================================================================
+  // PUBLIC ACTIONS
+  // ====================================================================
 
-  /// Triggers the password reset email logic.
+  /// Triggers the password reset flow.
+  ///
+  /// **Flow:**
+  /// 1.  **Validation:** Checks if the email string is not empty and contains '@'.
+  /// 2.  **Network Call:** Delegates to [Coordinator.resetPassword].
+  /// 3.  **Analytics:** On success, logs a `password_reset_request` event.
+  /// 4.  **State Update:** Sets `isSuccess` to true to notify the UI.
   ///
   /// **Parameters:**
-  /// * [email]: The email address entered by the user.
-  ///
-  /// **Logic:**
-  /// 1. Validates input locally.
-  /// 2. Calls [Coordinator.resetPassword].
-  /// 3. Updates [_isSuccess] on completion.
+  /// * [email]: The user's input email address.
   Future<void> resetPassword(String email) async {
     _setLoading(true);
     _clearState();
 
     // 1. Basic Local Validation
-    if (email.isEmpty || !email.contains('@')) {
+    // Prevents unnecessary network calls for obviously bad input.
+    final trimmedEmail = email.trim();
+    if (trimmedEmail.isEmpty || !trimmedEmail.contains('@')) {
       _errorMessage = "Please enter a valid email address.";
       _setLoading(false);
       return;
@@ -61,32 +91,50 @@ class ResetPasswordViewModel extends ChangeNotifier {
 
     try {
       // 2. Delegate to Coordinator
-      await _coordinator.resetPassword(email);
+      // The coordinator handles the specific FirebaseAuth call.
+      await _coordinator.resetPassword(trimmedEmail);
       
-      // 3. Update Success State
-      _isSuccess = true;
+      // 3. Analytics Integration
+      // Track that a user requested a password reset.
+      // NOTE: We do NOT log the email address itself to protect user privacy (PII).
+      await AnalyticsService().logEvent(
+        'password_reset_request', 
+        params: {'method': 'email_link'}
+      );
 
-    } on RegisterFailure catch (e) {
-      // Handle domain-specific errors thrown by Coordinator
-      _errorMessage = e.message;
-    } on FirebaseAuthException catch (e) {
-      // Handle raw Firebase errors if they slip through
-      _errorMessage = e.message ?? "Failed to send reset email.";
+      // 4. Update Success State
+      _isSuccess = true;
+      // We don't set loading to false here immediately if we want the success 
+      // state to trigger a navigation/dialog while "loading" finishes in the UI.
+      // But typically, we finish loading to enable the UI to react.
+
     } catch (e) {
-      // Catch-all
-      _errorMessage = "An unexpected error occurred.";
+      // 5. Error Handling
+      // The Coordinator throws a generic Exception with a message.
+      // We strip the "Exception: " prefix if present for cleaner UI.
+      final msg = e.toString().replaceAll("Exception: ", "");
+      
+      _errorMessage = msg;
+      
+      // Log the failure (optional, but good for debugging issues)
+      debugPrint("Reset Password Failed: $e");
     } finally {
+      // Always stop loading, regardless of success or failure.
       _setLoading(false);
     }
   }
 
-  // --- INTERNAL HELPERS ---
+  // ====================================================================
+  // INTERNAL HELPERS
+  // ====================================================================
 
+  /// Updates the `_isLoading` flag and triggers a UI rebuild.
   void _setLoading(bool value) {
     _isLoading = value;
     notifyListeners();
   }
 
+  /// Resets the error and success states before a new attempt.
   void _clearState() {
     _errorMessage = null;
     _isSuccess = false;

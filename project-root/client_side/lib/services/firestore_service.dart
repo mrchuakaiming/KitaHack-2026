@@ -217,4 +217,8 @@ Future<void> deleteUser(String uid) async {
 
     return query.docs.map((d) => d.data()).toList();
   }
+
+  Stream<DocumentSnapshot<Map<String, dynamic>>> streamRoom(String roomId) {
+    return _db.collection('rooms').doc(roomId).snapshots();
+  }
 }

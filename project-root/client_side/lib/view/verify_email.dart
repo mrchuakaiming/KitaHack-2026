@@ -1,13 +1,16 @@
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
+import '../services/analytics_service.dart';
 import 'common_widgets.dart';
-import '../viewmodels/register_vm.dart';
 
-/// The first step of registration: Account Security.
+/// **Step 1: Account Security (Verify Email)**
 ///
-/// **Logic:**
-/// Collects Email/Password and calls [RegisterViewModel.verifyEmail].
-/// On success, navigates to [RegisterPage].
+/// **Role:**
+/// Acts as a data collector for the registration process.
+/// It does **NOT** create an account yet. Instead, it validates the
+/// credentials (Regex, matching passwords) and passes them to Step 2.
+///
+/// **Analytics:**
+/// Logs a `sign_up_start` event when the user clicks "Next".
 class VerifyEmailPage extends StatefulWidget {
   const VerifyEmailPage({super.key});
 
@@ -16,7 +19,10 @@ class VerifyEmailPage extends StatefulWidget {
 }
 
 class _VerifyEmailPageState extends State<VerifyEmailPage> {
+  // Key for Form validation (ensures email is valid regex, pass > 6 chars)
   final _formKey = GlobalKey<FormState>();
+
+  // Controllers to capture user input
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   final _confirmController = TextEditingController();
@@ -29,44 +35,50 @@ class _VerifyEmailPageState extends State<VerifyEmailPage> {
     super.dispose();
   }
 
-  void _handleNext() async {
+  /// Handles the "Next Step" action.
+  ///
+  /// **Logic:**
+  /// 1. Validates inputs locally (Regex, Length, Match).
+  /// 2. Logs `sign_up_start` analytics event.
+  /// 3. Navigates to `/register`, passing email/password as arguments.
+  void _handleNext() {
     if (_formKey.currentState!.validate()) {
-      final vm = context.read<RegisterViewModel>();
+      // ANALYTICS: Track that a user has started the funnel
+      AnalyticsService().logEvent('sign_up_start', params: {
+        'method': 'email_password'
+      });
 
-      // EXECUTE VM LOGIC
-      bool success = await vm.verifyEmail(
-        _emailController.text, 
-        _passwordController.text
+      // PASS-FORWARD STRATEGY:
+      // We do not create the user here. We pass the data to Step 2.
+      Navigator.pushNamed(
+        context,
+        '/register', // Route to Step 2
+        arguments: {
+          'email': _emailController.text.trim(),
+          'password': _passwordController.text,
+        },
       );
-
-      if (success && mounted) {
-        // Step 1 Complete -> Go to Step 2
-        Navigator.pushReplacementNamed(context, '/register');
-      }
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    // We use RegisterViewModel here as well, since it holds the methods for this flow.
-    final vm = context.watch<RegisterViewModel>();
-
     return Scaffold(
-      appBar: AppBar(leading: const BackButton(color: Colors.black)),
+      appBar: AppBar(title: const Text("Create Account")),
       body: SingleChildScrollView(
-        padding: const EdgeInsets.all(25),
         child: Column(
           children: [
             const AuthHeader(
-              title: "Create Account",
-              subtitle: "First, secure your login details.",
+              title: "Step 1",
+              subtitle: "Secure your account"
             ),
-
+            
             AuthBox(
               child: Form(
                 key: _formKey,
                 child: Column(
                   children: [
+                    // --- Email Field ---
                     AuthTextField(
                       labelText: "Email",
                       obscureText: false,
@@ -74,6 +86,8 @@ class _VerifyEmailPageState extends State<VerifyEmailPage> {
                       prefixIcon: const Icon(Icons.email),
                       validator: (val) => !val!.contains('@') ? 'Invalid Email' : null,
                     ),
+                    
+                    // --- Password Field ---
                     AuthTextField(
                       labelText: "Password",
                       obscureText: true,
@@ -81,6 +95,8 @@ class _VerifyEmailPageState extends State<VerifyEmailPage> {
                       prefixIcon: const Icon(Icons.lock),
                       validator: (val) => val!.length < 6 ? 'Min 6 chars' : null,
                     ),
+                    
+                    // --- Confirm Password Field ---
                     AuthTextField(
                       labelText: "Confirm Password",
                       obscureText: true,
@@ -91,12 +107,10 @@ class _VerifyEmailPageState extends State<VerifyEmailPage> {
 
                     const SizedBox(height: 20),
 
-                    if (vm.errorMessage != null)
-                      Text(vm.errorMessage!, style: const TextStyle(color: Colors.red)),
-
+                    // --- Action Button ---
                     AuthButton(
-                      text: vm.isLoading ? "Processing..." : "Next Step",
-                      onPressed: vm.isLoading ? null : _handleNext,
+                      text: "Next Step",
+                      onPressed: _handleNext,
                     ),
                   ],
                 ),

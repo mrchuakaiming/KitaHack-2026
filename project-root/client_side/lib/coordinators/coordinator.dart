@@ -677,7 +677,7 @@ class Coordinator {
  * This section contains:
  *
  *   - searchRestaurant(query) : Fetch restaurant search results from MapsService for UI display
- *   - submitPreference(...)    : Save user's live preferences to Firestore under the room
+ *   - submitPreference(...)    : Save user's live preferex`xnces to Firestore under the room
  *
  * Design notes:
  *  - searchRestaurant() only returns a list of results; UI is responsible for displaying them.

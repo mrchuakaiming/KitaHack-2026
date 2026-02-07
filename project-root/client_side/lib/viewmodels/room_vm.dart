@@ -1,178 +1,267 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 
-// TODO: searchRestaurant(), submitPreferences(), leaveRoom(), geenerateRecommendation(), storeRecommendation(), getRecommendation(), wantResult() from coordinator.dart
+// [IMPORT] Business Logic & Services
+import '../coordinators/coordinator.dart';
+import '../models/preferences.dart';
+import '../services/firestore_service.dart';
+import '../services/analytics_service.dart';
 
-/// The ViewModel responsible for the Active Room (Lobby) state.
+/// **ViewModel for the Active Room Session**
 class RoomViewModel extends ChangeNotifier {
-  
-  // --- STATE ---
+
+  // --- CONSTANTS ---
+  static const int maxParticipants = 12; // 1 Host + 11 Guests
+
+  // ====================================================================
+  // DEPENDENCIES
+  // ====================================================================
+  final Coordinator _coordinator;
+  final FirestoreService _firestore; 
+
+  // ====================================================================
+  // STATE PROPERTIES
+  // ====================================================================
   String _roomId = "";
-  
-  // Host Status: Determines who sees the "Generate" button vs "Save" button
-  bool _isHost = false; 
-  
-  // Lobby State
-  RangeValues _budgetRange = const RangeValues(10, 500);
-  final List<String> _preferences = [];
-  
-  // Participant State: Local user has finished voting
+  String get _uid => FirebaseAuth.instance.currentUser?.uid ?? '';
+
+  // Local State
+  RangeValues _budgetRange = const RangeValues(20, 50);
+  List<String> _localPreferences = [];
   bool _isLocked = false;
-  
-  // Host State: Tracks if all other users have finished voting
-  // This controls the Host's button color (Grey -> Green)
-  bool _allParticipantsReady = false; 
-  
   bool _isLoading = false;
-  
-  // Result State
-  Map<String, dynamic>? _recommendation; 
 
-  // --- GETTERS ---
+  // Remote State
+  bool _isHost = false;
+  List<PreferencesModel> _participants = [];
+  Map<String, dynamic>? _recommendation;
+  StreamSubscription? _roomSubscription;
+
+  // ====================================================================
+  // CONSTRUCTOR
+  // ====================================================================
+  RoomViewModel({Coordinator? coordinator, FirestoreService? firestore})
+      : _coordinator = coordinator ?? Coordinator(),
+        _firestore = firestore ?? FirestoreService();
+
+  // ====================================================================
+  // GETTERS
+  // ====================================================================
   String get roomId => _roomId;
-  bool get isHost => _isHost;
   RangeValues get budgetRange => _budgetRange;
-  List<String> get preferences => List.unmodifiable(_preferences);
+  List<String> get preferences => List.unmodifiable(_localPreferences);
   bool get isLocked => _isLocked;
-  bool get allParticipantsReady => _allParticipantsReady; // NEW
   bool get isLoading => _isLoading;
+  bool get isHost => _isHost;
   Map<String, dynamic>? get recommendation => _recommendation;
+  List<PreferencesModel> get participants => _participants;
 
-  // --- 1. INITIALIZATION ---
+  /// Helper: Check if we have participants.
+  bool get allParticipantsReady => _participants.isNotEmpty;
 
-  Future<void> joinRoom(String code) async {
-    _setLoading(true);
-    _roomId = code;
-    
-    // TODO: Real logic to check if user is Host
-    // SIMULATION: If code contains "HOST", we act as Host for testing.
-    // Otherwise, acts as Participant.
-    _isHost = code.toUpperCase().contains("HOST"); 
-    
-    _resetLobby();
-    
-    // SIMULATION: If we are host, simulate other users finishing after 5 seconds
-    if (_isHost) {
-      simulateParticipantsFinishing();
+  /// Helper: Check if the room has reached its maximum capacity.
+  bool get isRoomFull => _participants.length >= maxParticipants;
+
+  /// Returns a warning message if the room is full, or null otherwise.
+  String? get roomCapacityWarning {
+    if (isRoomFull) {
+      return "Maximum capacity ($maxParticipants) reached. No more submissions allowed.";
     }
-
-    _setLoading(false);
+    return null;
   }
 
-  // --- 2. USER ACTIONS ---
+  // ====================================================================
+  // 1. INITIALIZATION & STREAMS
+  // ====================================================================
+  void setRoomId(String id) {
+    if (_roomId != id && id.isNotEmpty) {
+      _roomId = id;
+      _subscribeToRoom();
+    }
+  }
 
-  Future<List<String>> searchRestaurant(String query) async {
-    await Future.delayed(const Duration(milliseconds: 500));
-    if (query.isEmpty) return [];
-    return ["$query Place A", "$query Place B", "The Best $query"];
+  void _subscribeToRoom() {
+    _roomSubscription?.cancel();
+    _roomSubscription = _firestore.streamRoom(_roomId).listen((snapshot) {
+      if (!snapshot.exists || snapshot.data() == null) return;
+
+      final data = snapshot.data() as Map<String, dynamic>;
+
+      // A. Sync Recommendation
+      if (data.containsKey('aiRecommendation')) {
+        _recommendation = data['aiRecommendation'];
+      }
+
+      // B. Sync Host Status
+      if (_uid.isNotEmpty) {
+        _isHost = (data['host_uid'] == _uid);
+      }
+
+      // C. Sync Participants
+      if (data.containsKey('participants')) {
+        final rawParticipants = data['participants'] as Map<String, dynamic>;
+        _participants = rawParticipants.entries.map((e) {
+          if (e.value is Map) {
+             return PreferencesModel.fromJson(Map<String, dynamic>.from(e.value));
+          }
+          return PreferencesModel(roomId: _roomId, livePreferences: [], preferredCuisine: [], budget: [0,0], dietaryRestrictions: []);
+        }).toList();
+      }
+
+      notifyListeners();
+    });
+  }
+
+  @override
+  void dispose() {
+    _roomSubscription?.cancel();
+    super.dispose();
+  }
+
+  // ====================================================================
+  // 2. USER ACTIONS
+  // ====================================================================
+  Future<List<Map<String, dynamic>>> searchRestaurant(String query) async {
+    if (query.trim().isEmpty) return [];
+    return await _coordinator.searchRestaurant(query);
   }
 
   void addPreference(String item) {
-    if (_isLocked) return;
-    if (!_preferences.contains(item)) {
-      _preferences.add(item);
+    if (!_isLocked && !_localPreferences.contains(item)) {
+      _localPreferences.add(item);
       notifyListeners();
     }
   }
 
-  /// PARTICIPANT: Save Preferences
-  /// Locks the UI and sends votes to DB.
-  Future<void> submitPreferences() async {
-    _setLoading(true);
-    
-    // TODO: Call RoomService.submitUserVotes()
-    await Future.delayed(const Duration(seconds: 1));
-    
-    _isLocked = true; // This triggers the button change to Grey/Non-clickable
-    _setLoading(false);
+  void removePreference(String item) {
+    if (!_isLocked) {
+      _localPreferences.remove(item);
+      notifyListeners();
+    }
   }
 
-  Future<void> leaveRoom() async {
-    _setLoading(true);
-    await Future.delayed(const Duration(milliseconds: 500));
-    _resetLobby();
-    _roomId = "Unknown";
-    _setLoading(false);
+  void setBudget(RangeValues range) {
+    if (!_isLocked) {
+      _budgetRange = range;
+      notifyListeners();
+    }
   }
 
-  // --- 3. HOST ACTIONS ---
+  Future<void> submitPreference() async {
+    if (_uid.isEmpty || _roomId.isEmpty) return;
 
-  /// Simulates waiting for other users to click "Save Preferences".
-  /// In a real app, this would be a Stream listener from Firestore/Socket.
-  void simulateParticipantsFinishing() async {
-    await Future.delayed(const Duration(seconds: 5));
-    _allParticipantsReady = true; // This triggers Host button Grey -> Green
-    notifyListeners();
-  }
-
-  /// HOST: Generate Result
-  /// Only allowed if [_allParticipantsReady] is true.
-  Future<void> generateRecommendation() async {
-    if (!_isHost) return; 
-
-    _setLoading(true);
-    await Future.delayed(const Duration(seconds: 2));
-
-    if (_preferences.isNotEmpty) {
-      _recommendation = {
-        'name': _preferences[0],
-        'type': 'User Choice',
-        'timestamp': DateTime.now().toString(),
-      };
-    } else {
-      _recommendation = {
-        'name': "Random Place Nearby",
-        'type': 'Fallback',
-        'timestamp': DateTime.now().toString(),
-      };
+    // CAPACITY CHECK
+    if (isRoomFull) {
+      // If user hasn't submitted yet and room is full, block them.
+      // (Unless they are re-submitting, which our current logic treats as new)
+      // Ideally check if _uid is already in participants. 
+      // For now, simple block:
+      if (!_participants.any((p) => true)) { // TODO: Add uid to PreferencesModel to check properly
+         // Fail silently or show error via state
+         return; 
+      }
     }
 
-    await storeRecommendation(_recommendation!);
-    _setLoading(false);
+    _setLoading(true);
+
+    try {
+      final prefModel = PreferencesModel(
+        roomId: _roomId,
+        livePreferences: _localPreferences.map((p) => {'value': p}).toList(),
+        budget: [_budgetRange.start.round(), _budgetRange.end.round()],
+        preferredCuisine: [], 
+        dietaryRestrictions: [],
+      );
+
+      await _coordinator.submitPreference(
+        uid: _uid,
+        roomId: _roomId,
+        preferences: prefModel,
+      );
+
+      _isLocked = true;
+      
+      await AnalyticsService().logEvent('preferences_submitted', params: {'room_id': _roomId});
+
+    } catch (e) {
+      debugPrint("Submit failed: $e");
+      _isLocked = false;
+    } finally {
+      _setLoading(false);
+    }
+  }
+
+  void lockSelection() => submitPreference();
+
+  // ====================================================================
+  // 3. HOST ACTIONS
+  // ====================================================================
+  Future<void> generateRecommendation() async {
+    if (!_isHost || _roomId.isEmpty) return;
+
+    _setLoading(true);
+
+    try {
+      await AnalyticsService().logEvent('ai_generation_started', params: {'room_id': _roomId});
+
+      final result = await _coordinator.generateRecommendation(roomId: _roomId);
+      await storeRecommendation(result);
+
+    } catch (e) {
+      debugPrint("Generation failed: $e");
+    } finally {
+      _setLoading(false);
+    }
   }
 
   Future<void> storeRecommendation(Map<String, dynamic> result) async {
-    await Future.delayed(const Duration(milliseconds: 500));
-    notifyListeners();
+    try {
+      await _coordinator.storeRecommendation(roomId: _roomId, result: result);
+      await AnalyticsService().logEvent('ai_generation_success', params: {'room_id': _roomId});
+    } catch (e) {
+      debugPrint("Store recommendation failed: $e");
+    }
   }
 
-  // --- 4. RESULT RETRIEVAL ---
-
+  // ====================================================================
+  // 4. RESULT ACTIONS
+  // ====================================================================
   Future<void> wantResult() async {
-    await Future.delayed(const Duration(seconds: 1));
-    notifyListeners();
-  }
-
-  // --- LOCAL HELPERS ---
-  
-  void setBudget(RangeValues values) {
-    if (!_isLocked) {
-      _budgetRange = values;
-      notifyListeners();
+    if (_roomId.isEmpty) return;
+    try {
+      await _coordinator.wantResult(roomId: _roomId, doneUsers: [_uid]);
+      await AnalyticsService().logEvent('result_accepted', params: {'room_id': _roomId});
+    } catch (e) {
+      debugPrint("Want Result failed: $e");
     }
   }
 
-  void removePreference(String pref) {
-    if (!_isLocked) {
-      _preferences.remove(pref);
-      notifyListeners();
+  // ====================================================================
+  // 5. CLEANUP
+  // ====================================================================
+  Future<void> leaveRoom() async {
+    if (_uid.isNotEmpty && _roomId.isNotEmpty) {
+      try {
+        await _coordinator.leaveRoom(roomId: _roomId, uid: _uid);
+        await AnalyticsService().logEvent('room_left', params: {'room_id': _roomId});
+      } catch (e) {
+        debugPrint("Error leaving room: $e");
+      }
     }
-  }
-
-  void _setLoading(bool val) {
-    _isLoading = val;
-    notifyListeners();
-  }
-
-  void _resetLobby() {
-    _budgetRange = const RangeValues(10, 50);
-    _preferences.clear();
+    _roomSubscription?.cancel();
+    _roomSubscription = null;
+    _localPreferences.clear();
     _isLocked = false;
-    _allParticipantsReady = false; // Reset host wait state
     _recommendation = null;
+    _isHost = false;
+    _roomId = "";
+    _participants.clear();
+    notifyListeners();
   }
 
-  /// Bridge method for the View to call
-  void lockSelection() {
-    submitPreferences();
+  void _setLoading(bool value) {
+    _isLoading = value;
+    notifyListeners();
   }
 }

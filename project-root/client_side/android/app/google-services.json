@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "516219438323",
+    "project_id": "what2eat-450a9",
+    "storage_bucket": "what2eat-450a9.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:516219438323:android:6f8c128be3c689bfc0e386",
+        "android_client_info": {
+          "package_name": "com.example.what2eat"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDPsWjONeQYM7rFHLKD3MSh3qlLFhy4rD4"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
