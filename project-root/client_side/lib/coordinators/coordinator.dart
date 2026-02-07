@@ -618,7 +618,7 @@ class Coordinator {
     bool alreadySubmitted = false;
     bool hasDisconnectedAt = false;
     if (hasRecord) {
-      final val = participants![uid];
+      final val = participants[uid];
       if (val is Map) {
         final s = val['submitted'];
         if (s is bool) alreadySubmitted = s;

@@ -22,17 +22,26 @@ class _RegisterPageState extends State<RegisterPage> {
   // -- Controllers for Profile --
   final TextEditingController _usernameController = TextEditingController();
   
-  // -- Dynamic Lists --
-  // Note: In a real app, you might use a more robust list editor.
-  // Here we use simple controllers for demo purposes.
-  final List<TextEditingController> _cuisineControllers = [];
-  final List<TextEditingController> _dietaryControllers = [];
+  // -- Hardcoded Data Lists --
+  final List<String> _availableCuisines = [
+    'Italian', 'Chinese', 'Japanese', 'Mexican', 
+    'Indian', 'Thai', 'American', 'French', 
+    'Mediterranean', 'Korean', 'Vietnamese', 'Fast Food'
+  ];
+
+  final List<String> _availableDietary = [
+    'Vegetarian', 'Vegan', 'Gluten-Free', 
+    'Halal', 'Kosher', 'Nut-Free', 
+    'Dairy-Free', 'Low-Carb', 'None'
+  ];
+
+  // -- Selection State --
+  final List<String> _selectedCuisines = [];
+  final List<String> _selectedDietary = [];
 
   @override
   void dispose() {
     _usernameController.dispose();
-    for (var c in _cuisineControllers) {c.dispose();}
-    for (var c in _dietaryControllers) {c.dispose();}
     super.dispose();
   }
 
@@ -61,14 +70,13 @@ class _RegisterPageState extends State<RegisterPage> {
       final vm = context.read<RegisterViewModel>();
 
       // 2. Execute Atomic Registration
-      // We combine Step 1 data (Args) + Step 2 data (Controllers)
       bool success = await vm.registerUser(
         email: args['email'],
         password: args['password'],
         username: _usernameController.text,
-        // Convert controllers to plain string lists
-        cuisines: _cuisineControllers.map((c) => c.text).where((t) => t.isNotEmpty).toList(),
-        dietary: _dietaryControllers.map((c) => c.text).where((t) => t.isNotEmpty).toList(),
+        // Pass the selected lists directly
+        cuisines: _selectedCuisines,
+        dietary: _selectedDietary,
       );
 
       // 3. Navigate on Success
@@ -79,19 +87,49 @@ class _RegisterPageState extends State<RegisterPage> {
     }
   }
 
-  // --- UI HELPERS for Dynamic Lists ---
-
-  void _addItem(List<TextEditingController> list) {
+  // --- UI Helpers for Chips ---
+  
+  void _toggleSelection(List<String> list, String item, bool isSelected) {
     setState(() {
-      list.add(TextEditingController());
+      if (isSelected) {
+        list.add(item);
+      } else {
+        list.remove(item);
+      }
     });
   }
 
-  void _removeItem(List<TextEditingController> list, int index) {
-    setState(() {
-      list[index].dispose();
-      list.removeAt(index);
-    });
+  Widget _buildChipSection(String title, List<String> options, List<String> selectedList) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          title, 
+          style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.grey, fontSize: 14)
+        ),
+        const SizedBox(height: 10),
+        Wrap(
+          spacing: 8.0,
+          runSpacing: 4.0,
+          children: options.map((option) {
+            final isSelected = selectedList.contains(option);
+            return FilterChip(
+              label: Text(option),
+              selected: isSelected,
+              selectedColor: const Color(0xFFFF7043).withOpacity(0.2),
+              checkmarkColor: const Color(0xFFFF7043),
+              labelStyle: TextStyle(
+                color: isSelected ? const Color(0xFFFF7043) : Colors.black87,
+                fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+              ),
+              onSelected: (bool selected) {
+                _toggleSelection(selectedList, option, selected);
+              },
+            );
+          }).toList(),
+        ),
+      ],
+    );
   }
 
   @override
@@ -110,6 +148,7 @@ class _RegisterPageState extends State<RegisterPage> {
               child: Form(
                 key: _formKey,
                 child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     // --- Username ---
                     AuthTextField(
@@ -119,17 +158,15 @@ class _RegisterPageState extends State<RegisterPage> {
                       prefixIcon: const Icon(Icons.person),
                       validator: (val) => val!.isEmpty ? "Required" : null,
                     ),
-                    const SizedBox(height: 20),
+                    const SizedBox(height: 25),
 
-                    // --- Dynamic Cuisines ---
-                    _buildSectionHeader("Favorite Cuisines", () => _addItem(_cuisineControllers)),
-                    ..._buildDynamicList(_cuisineControllers),
+                    // --- Cuisines Chips ---
+                    _buildChipSection("Favorite Cuisines", _availableCuisines, _selectedCuisines),
 
-                    const SizedBox(height: 20),
+                    const SizedBox(height: 25),
 
-                    // --- Dynamic Dietary ---
-                    _buildSectionHeader("Dietary Restrictions", () => _addItem(_dietaryControllers)),
-                    ..._buildDynamicList(_dietaryControllers),
+                    // --- Dietary Chips ---
+                    _buildChipSection("Dietary Restrictions", _availableDietary, _selectedDietary),
 
                     const SizedBox(height: 30),
 
@@ -157,41 +194,5 @@ class _RegisterPageState extends State<RegisterPage> {
         ),
       ),
     );
-  }
-
-  Widget _buildSectionHeader(String title, VoidCallback onAdd) {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-      children: [
-        Text(title, style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.grey)),
-        IconButton(
-          onPressed: onAdd,
-          icon: const Icon(Icons.add_circle, color: Color(0xFFFF7043)),
-        ),
-      ],
-    );
-  }
-
-  List<Widget> _buildDynamicList(List<TextEditingController> controllers) {
-    return controllers.asMap().entries.map((entry) {
-      return Padding(
-        padding: const EdgeInsets.only(bottom: 8.0),
-        child: Row(
-          children: [
-            Expanded(
-              child: AuthTextField(
-                labelText: "Item ${entry.key + 1}",
-                obscureText: false,
-                controller: entry.value,
-              ),
-            ),
-            IconButton(
-              icon: const Icon(Icons.delete_outline, color: Colors.red),
-              onPressed: () => _removeItem(controllers, entry.key),
-            ),
-          ],
-        ),
-      );
-    }).toList();
   }
 }

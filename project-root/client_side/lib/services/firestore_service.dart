@@ -3,7 +3,7 @@ import '../models/user.dart'; // adjust the relative path to your UserModel
 
 /// FirestoreService centralizes reads/writes for Firestore.
 /// - Users: Strongly typed via `UserModel`.
-/// - Rooms: Dictionary-first (Map<String, dynamic>), no dedicated model.
+/// - Rooms: Dictionary-first `(Map<String, dynamic>)`, no dedicated model.
 /// - Preferences: Stores user preferences per room.
 class FirestoreService {
   // Singleton pattern (kept from your original)
@@ -192,14 +192,33 @@ CollectionReference<Map<String, dynamic>> get _preferencesCol =>
 DocumentReference<Map<String, dynamic>> _preferenceDoc(String roomId) =>
     _preferencesCol.doc(roomId);
 
-/// Create or update preferences for a room
-/// Stores all users’ preferences in a room together (as a map keyed by uid)
-Future<void> setPreferences({
-  required String roomId,
-  required Map<String, dynamic> data, // preferences data for a user
-}) async {
-  // Merge the data into the room document
-  await _preferenceDoc(roomId).set(data, SetOptions(merge: true));
+  /// Create or update a preferences document for a user in a room
+  Future<void> setPreferences({
+    required String roomId,
+    required String uid,
+    required Map<String, dynamic> data,
+  }) async {
+    await _preferenceDoc(roomId, uid).set(data, SetOptions(merge: true));
+  }
+
+  /// Fetch preferences for a user in a room
+  Future<Map<String, dynamic>?> getPreferences({
+    required String roomId,
+    required String uid,
+  }) async {
+    final snap = await _preferenceDoc(roomId, uid).get();
+    if (!snap.exists) return null;
+    return snap.data();
+  }
+
+  /// Fetch all preferences for a room
+  Future<List<Map<String, dynamic>>> getAllPreferencesForRoom(String roomId) async {
+    final query = await _preferencesCol
+        .where('room_id', isEqualTo: roomId)
+        .get();
+
+    return query.docs.map((d) => d.data()).toList();
+  }
 }
 
 /// Fetch preferences for a room
