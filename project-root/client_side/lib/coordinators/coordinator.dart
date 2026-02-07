@@ -867,22 +867,30 @@ Future<String> storeRecommendation({
 /// -----------------------------
 /// wantResult
 ///
-/// Updates `done_users` in the Room document and triggers UI updates.
-/// Only shows result for users who have completed their selection.
-Future<void> wantResult({
+/// Fetches the AI-generated output for a room.
+/// Returns the recommendation for all users in the room.
+Future<Map<String, dynamic>> wantResult({
   required String roomId,
-  required List<String> doneUsers,
 }) async {
-  try{
-    // Update done_users in Room document
-    await _db.updateRoom(roomId, {
-      "done_users": doneUsers,
-  });
+  try {
+    // Fetch the Room document
+    final room = await _db.getRoom(roomId);
+    if (room == null) {
+      throw StateError('room-not-found');
+    }
 
-  }catch(e,st){
-    throw Exception('Failed to update done_users: $e\n$st');
+    // Extract and return the output
+    final output = room['output'];
+    if (output == null || output is! Map<String, dynamic>) {
+      throw StateError('output-not-found');
+    }
+
+    return output;
+  } catch (e, st) {
+    throw Exception('Failed to get room output: $e\n$st');
   }
 }
+
 
 /* ====================================================================
  * 9. CHANGE PASSWORD
