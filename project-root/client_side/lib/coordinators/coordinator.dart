@@ -1,7 +1,6 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import '../services/auth_service.dart';
 import '../services/firestore_service.dart';
-import '../services/analytics_service.dart';
 import '../services/maps_service.dart';
 import '../services/ai_service.dart';
 import '../services/rtdb_services.dart';
@@ -677,7 +676,7 @@ class Coordinator {
  * This section contains:
  *
  *   - searchRestaurant(query) : Fetch restaurant search results from MapsService for UI display
- *   - submitPreference(...)    : Save user's live preferex`xnces to Firestore under the room
+ *   - submitPreference(...)    : Save user's live preferences to Firestore under the room
  *
  * Design notes:
  *  - searchRestaurant() only returns a list of results; UI is responsible for displaying them.
@@ -740,7 +739,6 @@ Future<bool> submitPreference({
     // Store preferences in Firestore (composite key: room + user)
     await _db.setPreferences(
       roomId: roomId,
-      uid: uid,
       data: {
         'room_id': roomId,
         'uid': uid,

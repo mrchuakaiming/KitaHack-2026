@@ -184,41 +184,37 @@ Future<void> deleteUser(String uid) async {
 
   /* ----------------------------- PREFERENCES ------------------------------ */
 
-  CollectionReference<Map<String, dynamic>> get _preferencesCol =>
-      _db.collection('preferences');
+/// Firestore collection for preferences
+CollectionReference<Map<String, dynamic>> get _preferencesCol =>
+    _db.collection('preferences');
 
-  DocumentReference<Map<String, dynamic>> _preferenceDoc(String roomId, String uid) =>
-      _preferencesCol.doc('${roomId}_$uid');
+/// Document per room (not per user)
+DocumentReference<Map<String, dynamic>> _preferenceDoc(String roomId) =>
+    _preferencesCol.doc(roomId);
 
-  /// Create or update a preferences document for a user in a room
-  Future<void> setPreferences({
-    required String roomId,
-    required String uid,
-    required Map<String, dynamic> data,
-  }) async {
-    await _preferenceDoc(roomId, uid).set(data, SetOptions(merge: true));
-  }
+/// Create or update preferences for a room
+/// Stores all users’ preferences in a room together (as a map keyed by uid)
+Future<void> setPreferences({
+  required String roomId,
+  required Map<String, dynamic> data, // preferences data for a user
+}) async {
+  // Merge the data into the room document
+  await _preferenceDoc(roomId).set(data, SetOptions(merge: true));
+}
 
-  /// Fetch preferences for a user in a room
-  Future<Map<String, dynamic>?> getPreferences({
-    required String roomId,
-    required String uid,
-  }) async {
-    final snap = await _preferenceDoc(roomId, uid).get();
-    if (!snap.exists) return null;
-    return snap.data();
-  }
+/// Fetch preferences for a room
+Future<Map<String, dynamic>?> getPreferences(String roomId) async {
+  final snap = await _preferenceDoc(roomId).get();
+  if (!snap.exists) return null;
+  return snap.data();
+}
 
-  /// Fetch all preferences for a room
-  Future<List<Map<String, dynamic>>> getAllPreferencesForRoom(String roomId) async {
-    final query = await _preferencesCol
-        .where('room_id', isEqualTo: roomId)
-        .get();
-
-    return query.docs.map((d) => d.data()).toList();
-  }
-
-  Stream<DocumentSnapshot<Map<String, dynamic>>> streamRoom(String roomId) {
-    return _db.collection('rooms').doc(roomId).snapshots();
-  }
+/// Fetch all preferences for a room
+Future<List<Map<String, dynamic>>> getAllPreferencesForRoom(String roomId) async {
+  final snap = await _preferenceDoc(roomId).get();
+  if (!snap.exists) return [];
+  final data = snap.data()!;
+  // Each key in the document is a uid; each value is that user's preferences
+  return data.entries.map((e) => e.value as Map<String, dynamic>).toList();
+}
 }
