@@ -14,7 +14,7 @@ python-dotenv==1.0.0
 # Google APIs
 # =========================
 google-generativeai==0.2.0
-googlemaps==5.6.0
+googlemaps==4.10.0
 google-api-core==2.12.0
 
 # =========================
@@ -26,11 +26,10 @@ firebase-admin==6.3.0
 # HTTP requests
 # =========================
 requests==2.32.0
-httpx==1.4.3  # optional async HTTP support
+httpx==0.28.1  # optional async HTTP support
 
 # =========================
 # Testing
 # =========================
 pytest==8.3.2
-pytest-anyio==3.7.0
 pytest-asyncio==0.21.0  # async support for pytest
