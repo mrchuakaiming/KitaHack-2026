@@ -11,8 +11,14 @@ import 'package:what2eat/firebase_options.dart';
 // Import test suites
 // --------------------
 import 'register_user_test.dart';
-// import 'login_user_test.dart';
-// import 'delete_user_test.dart';
+import 'login_user_test.dart';
+import 'new_room_test.dart';
+import 'join_room_test.dart';
+import 'submit_preference_test.dart';
+import 'leave_room_test.dart';
+import 'store_recommendation_test.dart';
+import 'want_result_test.dart';
+import 'delete_account_test.dart';
 
 // --------------------
 // main() to run tests
@@ -36,6 +42,12 @@ void main() {
 
   // 3. Run user flow tests
   registerUserTests();
-  // loginUserTests();
-  // deleteUserTests();
+  loginUserTests();
+  newRoomTests();
+  joinRoomTests();
+  submitPreferenceTests();
+  leaveRoomTests(); // smoke-level only
+  storeRecommendationTests();
+  wantResultTests();
+  deleteAccountTests();
 }
