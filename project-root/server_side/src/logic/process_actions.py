@@ -25,7 +25,7 @@ maps_service_instance = MapsService()
 # -----------------------------------
 # DATA CONVERSION AND AI LOGIC
 # -----------------------------------
-def data_converter(room_data: Dict[str, Any], maps_service) -> Dict[str, Any]:
+def data_converter(participants: list, maps_service) -> Dict[str, Any]:
     """
     Convert client-sent room data into AI-readable structure.
 
@@ -42,8 +42,6 @@ def data_converter(room_data: Dict[str, Any], maps_service) -> Dict[str, Any]:
     Returns:
         Dict[str, Any]: Aggregated, AI-ready preference data.
     """
-
-    participants = room_data.get("participants", [])
     if not participants:
         return {
             "cuisine_counts": {},
@@ -180,7 +178,7 @@ You are a friendly assistant. Rewrite the following sentence to be lively, polit
 Original sentence: "{reasoning_sentence}"
 """
 
-def our_model(room_data: Dict[str, Any], maps_service) -> Dict[str, Any]:
+def our_model(participants: list, maps_service) -> Dict[str, Any]:
     """
     Core AI decision logic called by client-side AIService.
     
@@ -192,7 +190,7 @@ def our_model(room_data: Dict[str, Any], maps_service) -> Dict[str, Any]:
         Dict[str, Any]: AI recommendation result.
     """
     try:
-        converted_data = data_converter(room_data, maps_service)
+        converted_data = data_converter(participants, maps_service)
 
         prompt = generate_prompt_for_ai(converted_data)
         response = gemini_client.models.generate_content(
