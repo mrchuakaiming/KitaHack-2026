@@ -1,16 +1,19 @@
 // integration_test/store_recommendation_test.dart
+
 import 'dart:math';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_database/firebase_database.dart';
 
-import 'package:what2eat/coordinator/coordinator.dart';
+import 'package:what2eat/coordinators/coordinator.dart';
 
+/// This function is called by the global test runner (test_main.dart)
 void storeRecommendationTests() {
+  // Coordinator instance (uses Firebase initialized by runner)
   final coordinator = Coordinator();
 
-  // Simple helper to make a random-but-deterministic-ish recommendation map
+  // Helper to generate a random recommendation map
   Map<String, dynamic> _randomRecommendation() {
     const names = [
       'Katsu Den',
@@ -19,6 +22,7 @@ void storeRecommendationTests() {
       'Sushi Yume',
       'Taco Loco',
     ];
+
     const reasons = [
       'Highly rated near you with quick service.',
       'Great balance of flavor and value.',
@@ -26,84 +30,88 @@ void storeRecommendationTests() {
       'Consistently fresh and well-reviewed.',
       'Crowd-pleaser with vegetarian options.',
     ];
-    const prices = ['$', '$$', '$$–$$$', '$$$'];
+
+    const prices = ['Free', r'$', r'$$', r'$$$'];
 
     final rnd = Random();
     final name = names[rnd.nextInt(names.length)];
     final reason = reasons[rnd.nextInt(reasons.length)];
     final price = prices[rnd.nextInt(prices.length)];
 
-    // Keep justification to ~1–2 sentences
-    final justification = '$reason Perfect for a casual bite.';
-
     return <String, dynamic>{
       'recommendation': name,
-      'justification': justification,
+      'justification': '$reason Perfect for a casual bite.',
       'priceRange': price,
     };
   }
 
   group('STORE RECOMMENDATION — Integration Test', () {
     setUp(() async {
-      // --- Arrange (suite prep): isolate state ---
+      // Clean Firestore rooms collection
       final fs = FirebaseFirestore.instance;
       final roomsSnap = await fs.collection('rooms').get();
-      for (final d in roomsSnap.docs) {
-        await d.reference.delete();
+      for (final doc in roomsSnap.docs) {
+        await doc.reference.delete();
       }
 
+      // Clean RTDB participants subtree
       final db = FirebaseDatabase.instance;
       await db.ref('participants').remove();
     });
 
-    test('Stores AI recommendation, marks status, and clears RTDB participants', () async {
-      // ------------------
-      // Arrange
-      // ------------------
-      final fs = FirebaseFirestore.instance;
-      final db = FirebaseDatabase.instance;
+    testWidgets(
+      'Stores AI recommendation and clears RTDB participants',
+      (tester) async {
+        final fs = FirebaseFirestore.instance;
+        final db = FirebaseDatabase.instance;
 
-      const roomId = 'ROOM_RECO_001';
-      // Seed a basic room doc; fields not relevant to assertion are minimal
-      await fs.collection('rooms').doc(roomId).set({
-        'room_id': roomId,
-        'host_uid': 'host_for_reco',
-        'output': <String, dynamic>{},
-      });
+        const roomId = 'ROOM_RECO_001';
 
-      // Seed RTDB participants so we can verify cleanup
-      await db.ref('participants/$roomId/user_a').set({'submitted': true});
-      await db.ref('participants/$roomId/user_b').set({'submitted': false});
+        // Seed Firestore room doc
+        await fs.collection('rooms').doc(roomId).set({
+          'room_id': roomId,
+          'host_uid': 'host_for_reco',
+          'output': <String, dynamic>{},
+        });
 
-      final result = _randomRecommendation();
+        // Seed RTDB participants
+        await db.ref('participants/$roomId/user_a')
+            .set({'submitted': true});
+        await db.ref('participants/$roomId/user_b')
+            .set({'submitted': false});
 
-      // ------------------
-      // Act
-      // ------------------
-      final status = await coordinator.storeRecommendation(
-        roomId: roomId,
-        result: result,
-      );
+        final result = _randomRecommendation();
 
-      // ------------------
-      // Assert
-      // ------------------
-      // 1) Return status is "success"
-      expect(status, equals('success'));
+        // ------------------ Act ------------------
+        final status = await coordinator.storeRecommendation(
+          roomId: roomId,
+          result: result,
+        );
 
-      // 2) Firestore room doc has aiRecommendation + aiStatus == "done"
-      final roomDoc =
-          await fs.collection('rooms').doc(roomId).get();
-      expect(roomDoc.exists, isTrue);
-      final data = roomDoc.data()!;
-      expect(data['aiStatus'], equals('done'));
-      // Non-deterministic content (we created a random map): must match exactly the input map
-      expect(data['aiRecommendation'], equals(result));
+        // ------------------ Assert ------------------
+        expect(status, equals('success'));
 
-      // 3) RTDB participants subtree cleared
-      final participantsSnap = await db.ref('participants/$roomId').get();
-      expect(participantsSnap.exists, isFalse,
-          reason: 'participants/$roomId should be deleted by storeRecommendation');
-    });
+        final roomDoc = await fs.collection('rooms').doc(roomId).get();
+        expect(roomDoc.exists, isTrue);
+
+        final data = roomDoc.data()!;
+        expect(data.containsKey('output'), isTrue);
+
+        final output = data['output'] as Map<String, dynamic>;
+        expect(output['suggestion'], equals(result['recommendation']));
+        expect(output['justification'], equals(result['justification']));
+        expect(output['price_range'], equals(result['priceRange']));
+
+        expect(data.containsKey('aiStatus'), isFalse);
+        expect(data.containsKey('aiRecommendation'), isFalse);
+
+        final participantsSnap = await db.ref('participants/$roomId').get();
+        expect(
+          participantsSnap.exists,
+          isFalse,
+          reason: 'participants/$roomId should be deleted by storeRecommendation',
+        );
+      },
+    );
   });
 }

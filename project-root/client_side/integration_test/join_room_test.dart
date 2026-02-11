@@ -3,7 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_database/firebase_database.dart';
 
-import 'package:what2eat/coordinator/coordinator.dart';
+import 'package:what2eat/coordinators/coordinator.dart';
 
 void joinRoomTests() {
   final coordinator = Coordinator();
