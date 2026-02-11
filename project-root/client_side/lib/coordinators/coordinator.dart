@@ -849,10 +849,15 @@ Future<String> storeRecommendation({
   required Map<String, dynamic> result,
 }) async {
   try {
+    final output = {
+      "suggestion": result["recommended_place_id"] ?? result["recommended_cuisine"],
+      "justification": result["justification"],
+      "price_range": result["budget"] ?? "", // may be null
+    };
+
     //Store AI recommendation in Firestore
     await _db.updateRoom(roomId, {
-      "aiRecommendation": result,
-      "aiStatus": "done",
+      "output": output,
     });
 
     //Clean up all participants in RTDB for this room

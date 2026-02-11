@@ -160,7 +160,7 @@ TASK:
 {{
   "recommended_place_id": "<place_id or null>",
   "recommended_cuisine": "<cuisine or null>",
-  "budget": "<min> - <max>",
+  "budget": "<min or null> - <max or null>",
   "reasoning": "<max 2 sentences>"
 }}
 """
@@ -219,6 +219,7 @@ def our_model(room_data: Dict[str, Any], maps_service) -> Dict[str, Any]:
             "status": "success",
             "recommended_place_id": result.get("recommended_place_id"),
             "recommended_cuisine": result.get("recommended_cuisine"),
+            "budget": (result.get("budget") or []),
             "justification": justification,
         }
 
@@ -227,5 +228,6 @@ def our_model(room_data: Dict[str, Any], maps_service) -> Dict[str, Any]:
             "status": "error",
             "recommended_place_id": None,
             "recommended_cuisine": None,
+            "budget": None,
             "justification": f"AI failure: {str(e)}",
         }

@@ -716,7 +716,12 @@ void main() {
           ).toJson()
         ];
 
-        final aiResult = {'place': 'Some Restaurant', 'address': '123 Street'};
+        final aiResult = {
+          'recommended_place_id': 'p1',
+          'recommended_cuisine': 'Italian',
+          'budget': "",
+          'justification': 'Most users prefer Italian',
+        };
 
         when(() => mockDb.getAllPreferencesForRoom(roomId))
             .thenAnswer((_) async => fakePrefs);
@@ -752,28 +757,37 @@ void main() {
       test('updates Firestore and deletes RTDB participants, returns success', () async {
         //Stub Firestore update and RTDB deletion
         final roomId = 'r1';
-        final result = {
-          'suggestion': 'Sushi Place',
-          'justification': 'Best match for preferences',
-          'price_range': '20-50',
+        final aiResult = {
+          "recommended_place_id": "Sushi Place",
+          "recommended_cuisine": null,
+          "budget": "20-50",
+          "justification": "Best match for preferences",
         };
 
+        
         // Stub Firestore updateRoom and RTDB deletion
         when(() => mockDb.updateRoom(roomId, any())).thenAnswer((_) async {});
         when(() => mockRtdb.deleteRoomParticipants(roomId)).thenAnswer((_) async {});
-        //Call storeRecommendation
+
+        // Call storeRecommendation
         final status = await coordinator.storeRecommendation(
           roomId: roomId,
-          result: result,
+          result: aiResult,
         );
 
         // Assert: Function returns 'success'
         expect(status, 'success');
 
+        // Expected output format stored in Firestore
+        final expectedOutput = {
+          "suggestion": aiResult["recommended_place_id"] ?? aiResult["recommended_cuisine"],
+          "justification": aiResult["justification"],
+          "price_range": aiResult["budget"] ?? "",
+        };
+
         // Verify: Firestore and RTDB methods called correctly
         verify(() => mockDb.updateRoom(roomId, {
-              'aiRecommendation': result,
-              'aiStatus': 'done',
+              'output': expectedOutput,
             })).called(1);
 
         verify(() => mockRtdb.deleteRoomParticipants(roomId)).called(1);
@@ -782,7 +796,7 @@ void main() {
       test('returns error string if updateRoom fails', () async {
         //Stub Firestore to throw error
         final roomId = 'r1';
-        final result = {'suggestion': 'X', 'justification': 'Y'};
+        final result = {'suggestion': 'X', 'justification': 'Y','price_range:': ''};
 
         // Stub Firestore failure
         when(() => mockDb.updateRoom(roomId, any())).thenThrow(Exception('Firestore fail'));
