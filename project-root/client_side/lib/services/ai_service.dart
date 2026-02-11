@@ -11,21 +11,19 @@ import '../models/preferences.dart';
 class AIService {
   final String serverBaseUrl;
 
-  /// Construct with optional server base URL, defaults to Config.serverBaseUrl
   AIService({String? serverUrl}) : serverBaseUrl = serverUrl ?? Config.serverBaseUrl;
 
-  /// Sends aggregated participant preferences to the server
-  ///
-  /// Accepts a list of [PreferencesModel] and converts to JSON internally.
-  /// Server will run the AI model and return recommendation + justification.
+  /// Sends aggregated participant preferences to the server.
+  /// Returns a map of `String` keys and values (recommendation + justification).
+  /// If an error occurs, returns a map with keys "status" and "message".
   Future<Map<String, String>> sendPreferencesData({
     required List<PreferencesModel> participants,
   }) async {
     final url = Uri.parse('$serverBaseUrl/ai/participants');
 
-    // Convert PreferencesModel list to JSON
-    final participantsPayload = participants.map((p) => p.toJson()).toList();
-    final payload = {"participants": participantsPayload};
+    final payload = {
+      "participants": participants.map((p) => p.toJson()).toList(),
+    };
 
     try {
       final response = await http.post(
@@ -41,14 +39,20 @@ class AIService {
         };
       }
 
-      final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+      final decoded = jsonDecode(response.body);
+      if (decoded is! Map<String, dynamic>) {
+        return {
+          "status": "error",
+          "message": "Invalid server response",
+        };
+      }
 
-      // Ensure all values are strings
+      // Convert all values to String to simplify client handling
       return decoded.map((k, v) => MapEntry(k, v?.toString() ?? ""));
-    } catch (e) {
+    } catch (e, st) {
       return {
         "status": "error",
-        "message": "Request failed: $e",
+        "message": "Request failed: $e\n$st",
       };
     }
   }

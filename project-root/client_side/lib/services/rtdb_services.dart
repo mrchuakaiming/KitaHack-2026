@@ -1,5 +1,16 @@
 import 'package:firebase_database/firebase_database.dart';
 
+/// RTDBServiceException
+class RTDBServiceException implements Exception {
+  final String message;
+  final Object? originalException;
+
+  RTDBServiceException(this.message, [this.originalException]);
+
+  @override
+  String toString() => 'RTDBServiceException(message: $message, original: $originalException)';
+}
+
 /// RTDBService
 ///
 /// Service layer for Firebase Realtime Database (RTDB).
@@ -37,23 +48,35 @@ class RTDBService {
     required String uid,
     bool submitted = true,
   }) async {
-    await _rootRef
-        .child('participants')
-        .child(roomId)
-        .child(uid)
-        .update({'submitted': submitted});
+    try {
+      await _rootRef
+          .child('participants')
+          .child(roomId)
+          .child(uid)
+          .update({'submitted': submitted});
+    } catch (e) {
+      throw RTDBServiceException('Failed to set participant submitted', e);
+    }
   }
 
   /// Get all participants for a room
   Future<Map<String, dynamic>?> getParticipants(String roomId) async {
-    final snapshot = await _rootRef.child('participants').child(roomId).get();
-    if (!snapshot.exists) return null;
-    return Map<String, dynamic>.from(snapshot.value as Map);
+    try {
+      final snapshot = await _rootRef.child('participants').child(roomId).get();
+      if (!snapshot.exists) return null;
+      return Map<String, dynamic>.from(snapshot.value as Map);
+    } catch (e) {
+      throw RTDBServiceException('Failed to fetch participants for room $roomId', e);
+    }
   }
 
   /// Delete all participants for a room
   Future<void> deleteRoomParticipants(String roomId) async {
-    await _rootRef.child('participants').child(roomId).remove();
+    try {
+      await _rootRef.child('participants').child(roomId).remove();
+    } catch (e) {
+      throw RTDBServiceException('Failed to delete participants for room $roomId', e);
+    }
   }
 
   /// Delete a single participant from a room
@@ -61,7 +84,12 @@ class RTDBService {
     required String roomId,
     required String uid,
   }) async {
-    await _rootRef.child('participants').child(roomId).child(uid).remove();
+    try {
+      await _rootRef.child('participants').child(roomId).child(uid).remove();
+    } catch (e) {
+      throw RTDBServiceException(
+          'Failed to delete participant $uid from room $roomId', e);
+    }
   }
 
   // ============================
@@ -77,27 +105,37 @@ class RTDBService {
     required String roomId,
     required String uid,
   }) async {
-    final participantRef =
-        _rootRef.child('participants').child(roomId).child(uid);
+    try {
+      final participantRef =
+          _rootRef.child('participants').child(roomId).child(uid);
 
-    // Clear any previous disconnect marker (reconnection scenario)
-    await participantRef.child('disconnected_at').remove();
+      // Clear any previous disconnect marker
+      await participantRef.child('disconnected_at').remove();
 
-    // Set server timestamp on disconnect
-    participantRef.child('disconnected_at').onDisconnect().set(ServerValue.timestamp);
+      // Set server timestamp on disconnect
+      participantRef.child('disconnected_at').onDisconnect().set(ServerValue.timestamp);
+    } catch (e) {
+      throw RTDBServiceException(
+          'Failed to register onDisconnect for participant $uid in room $roomId', e);
+    }
   }
 
 /// Clears the 'disconnected_at' field for a participant if it exists
 Future<void> clearDisconnectedAt({
-  required String roomId,
-  required String uid,
-}) async {
-  await _rootRef
-      .child('participants')
-      .child(roomId)
-      .child(uid)
-      .child('disconnected_at')
-      .remove();
-}
+    required String roomId,
+    required String uid,
+  }) async {
+    try {
+      await _rootRef
+          .child('participants')
+          .child(roomId)
+          .child(uid)
+          .child('disconnected_at')
+          .remove();
+    } catch (e) {
+      throw RTDBServiceException(
+          'Failed to clear disconnected_at for participant $uid in room $roomId', e);
+    }
+  }
 
 }

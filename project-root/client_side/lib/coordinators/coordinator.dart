@@ -669,7 +669,6 @@ class Coordinator {
     }
   }
 
-
 /* ====================================================================
  * 5. PARTICIPANT PREFERENCES
  * --------------------------------------------------------------------
@@ -787,8 +786,8 @@ Future<void> leaveRoom({
       roomId: roomId,
       uid: uid,
     );
-  } catch (e) {
-    throw('[ERROR] Failed to register leaveRoom for $uid: $e');
+  } catch (e,st) {
+    throw Exception('[ERROR] Failed to register leaveRoom for $uid: $e\n$st');
   }
 }
 
@@ -865,7 +864,7 @@ Future<String> storeRecommendation({
 
     return "success";
   } catch (e) {
-    return "Failed to store recommendation: $e";
+    throw Exception("Failed to store recommendation: $e");
   }
 }
 
@@ -895,7 +894,6 @@ Future<Map<String, dynamic>> wantResult({
     throw Exception('Failed to get room output: $e\n$st');
   }
 }
-
 
 /* ====================================================================
  * 9. CHANGE PASSWORD

@@ -801,14 +801,19 @@ void main() {
         // Stub Firestore failure
         when(() => mockDb.updateRoom(roomId, any())).thenThrow(Exception('Firestore fail'));
 
-        //Call storeRecommendation
-        final status = await coordinator.storeRecommendation(
-          roomId: roomId,
-          result: result,
+        // Call storeRecommendation and expect it to throw
+        await expectLater(
+          () => coordinator.storeRecommendation(
+            roomId: roomId,
+            result: result,
+          ),
+          throwsA(
+            predicate((e) => 
+              e is Exception && 
+              e.toString().contains('Failed to store recommendation')
+            )
+          ),
         );
-
-        // Assert: error string is returned
-        expect(status, contains('Failed to store recommendation'));
       });
 
     });

@@ -29,31 +29,48 @@ class AnalyticsService {
   /// name: the unique event name, e.g., 'login_success'
   /// params: a map of key-value pairs describing the event
   Future<void> logEvent(String name, {Map<String, Object>? params}) async {
-    await _analytics.logEvent(name: name, parameters: params);
+    try {
+      await _analytics.logEvent(name: name, parameters: params);
+    } catch (_) {
+      // silently ignore
+    }
   }
 
   /// Logs a user login
   Future<void> logLogin({required String method}) async {
-    await logEvent('login', params: {'method': method});
+    try {
+      await logEvent('login', params: {'method': method});
+    } catch (_) {}
   }
 
   /// Logs when a user creates a room
   Future<void> logRoomCreated({required String roomId}) async {
-    await logEvent('room_created', params: {'room_id': roomId});
+    try {
+      await logEvent('room_created', params: {'room_id': roomId});
+    } catch (_) {}
   }
 
   /// Logs when a user views a page
   Future<void> logPageView({required String pageName}) async {
-    await _analytics.logEvent(name:'page_view', parameters: {'page': pageName});
+    try {
+      await _analytics.logEvent(
+        name: 'page_view',
+        parameters: {'page': pageName},
+      );
+    } catch (_) {}
   }
 
   /// Optional: sets the user ID for cross-device analytics
   Future<void> setUserId(String userId) async {
-    await _analytics.setUserId(id: userId);
+    try {
+      await _analytics.setUserId(id: userId);
+    } catch (_) {}
   }
 
   /// Optional: sets user properties for segmentation
   Future<void> setUserProperty({required String name, required String value}) async {
-    await _analytics.setUserProperty(name: name, value: value);
+    try {
+      await _analytics.setUserProperty(name: name, value: value);
+    } catch (_) {}
   }
 }
