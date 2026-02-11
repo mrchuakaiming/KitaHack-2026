@@ -7,14 +7,6 @@ import 'common_widgets.dart';
 import '../viewmodels/room_vm.dart';
 
 /// **RoomPage (Lobby View)**
-/// 
-/// This is the main interactive screen where users vote on their preferences.
-/// 
-/// **Key Features:**
-/// 1. **Google Map:** Users can explore the area and tap restaurants to add them.
-/// 2. **Cuisine Chips:** Quick-select hardcoded cuisines.
-/// 3. **Budget Slider:** Set the price range.
-/// 4. **Host Controls:** Only the host sees the "Generate" button.
 class RoomPage extends StatefulWidget {
   const RoomPage({super.key});
 
@@ -23,133 +15,78 @@ class RoomPage extends StatefulWidget {
 }
 
 class _RoomPageState extends State<RoomPage> {
-  // ====================================================================
-  // 1. STATE VARIABLES
-  // ====================================================================
-
-  /// Controller to programmatically move the map camera if needed.
   GoogleMapController? _mapController;
-  
-  /// The set of markers displayed on the map. 
-  /// We use a [Set] instead of a List because markers must be unique.
   final Set<Marker> _markers = {};
-
-  /// **Default Location:** San Francisco. 
-  /// TODO: In production, replace this with `Geolocator.getCurrentPosition()`.
+  
   static const CameraPosition _kDefaultLocation = CameraPosition(
     target: LatLng(37.7749, -122.4194),
     zoom: 14.0,
   );
 
-  /// **Hardcoded Cuisines:**
-  /// A static list of popular options for the FilterChips.
   final List<String> _cuisineOptions = [
-    'Italian', 'Chinese', 'Japanese', 'Mexican', 
-    'Indian', 'Thai', 'Burgers', 'Pizza', 
-    'Sushi', 'Vegan', 'Halal', 'Dessert'
+    'American', 
+    'Arab', 
+    'Chinese', 
+    'Fast Food', 
+    'French', 
+    'Indian', 
+    'Indonesian',
+    'Italian', 
+    'Japanese', 
+    'Korean', 
+    'Malay', 
+    'Mamak',
+    'Mediterranean', 
+    'Mexican', 
+    'Nyonya',
+    'Seafood',
+    'Thai', 
+    'Vegetarian',
+    'Vietnamese', 
+    'Western',
   ];
-
-  // ====================================================================
-  // 2. LIFECYCLE METHODS
-  // ====================================================================
 
   @override
   void initState() {
     super.initState();
-    
-    // Retrieve the Room ID passed via Navigator arguments
-    // Example: Navigator.pushNamed(context, '/room', arguments: 'room_123');
     final roomId = ModalRoute.of(context)?.settings.arguments as String?;
     
-    // Use addPostFrameCallback to safely access Provider context after the first build.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (roomId != null) {
         context.read<RoomViewModel>().setRoomId(roomId);
       }
-      // Check if there is already a result pending for this user
       context.read<RoomViewModel>().wantResult();
     });
   }
 
-  // ====================================================================
-  // 3. MAP LOGIC
-  // ====================================================================
+  // removed _showAddDialog since custom input is no longer allowed
 
-  // ====================================================================
-  // 4. HELPER METHODS
-  // ====================================================================
-
-  /// Shows a dialog to allow manual entry of a preference (e.g., "Tacos").
-  void _showAddDialog(BuildContext context, RoomViewModel vm) {
-    TextEditingController controller = TextEditingController();
-    showDialog(
-      context: context, 
-      builder: (ctx) => AlertDialog(
-        title: const Text("Add Custom Item"),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          decoration: const InputDecoration(hintText: "e.g., 'Spicy Food' or 'Tacos'"),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx), 
-            child: const Text("Cancel")
-          ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: kPrimaryColor),
-            onPressed: () {
-              if(controller.text.trim().isNotEmpty) {
-                vm.addPreference(controller.text.trim());
-              }
-              Navigator.pop(ctx);
-            }, 
-            child: const Text("Add", style: TextStyle(color: Colors.white))
-          )
-        ],
-      )
-    );
-  }
-
-  /// Navigation Handler for the BottomNavigationBar
   void _handleBottomNavTap(int index) {
      if (index == 1) {
-       // Index 1 is "Back to Home". 
-       // We use pushReplacement to reset the navigation stack.
        Navigator.pushReplacementNamed(context, '/home');
      }
   }
 
-  // ====================================================================
-  // 5. MAIN BUILD METHOD
-  // ====================================================================
-
   @override
   Widget build(BuildContext context) {
-    // Watch the ViewModel for changes (e.g., new participants, result ready)
     final vm = context.watch<RoomViewModel>();
     
     // --- DETERMINE CURRENT SCREEN STATE ---
-    // State 1: Result is ready (Show Winner)
     bool showResult = vm.recommendation != null;
-    
-    // State 2: Waiting Room (User submitted, but Host hasn't generated yet)
-    // We check !vm.isHost because the Host should never see the "Waiting" screen;
-    // the Host always sees the "Generate" button screen.
     bool isParticipantWaiting = !vm.isHost && vm.isLocked; 
-    
-    // State 3: Input Screen (Voting is active)
     bool showInputScreen = !showResult && !isParticipantWaiting;
+
+    // Helper boolean: Are inputs enabled?
+    // Disabled if: Submission is Full (Spectator), User is Locked (Done), or User is Host (View Only)
+    bool inputsDisabled = vm.isSubmissionFull || vm.isLocked || vm.isHost;
 
     return Scaffold(
       backgroundColor: kBackgroundColor,
       
-      // --- APP BAR ---
       appBar: AppBar(
         title: const Text("Lobby"), 
-        automaticallyImplyLeading: false, // Hide back button
+        automaticallyImplyLeading: false, 
         actions: [
-          // Room ID Badge (Top Right)
           Container(
             margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
@@ -177,8 +114,7 @@ class _RoomPageState extends State<RoomPage> {
           children: [
             
             // ====================================================
-            // VIEW STATE 1: RESULT SCREEN
-            // Displayed when the AI has finished generating.
+            // STATE 1: RESULT SCREEN
             // ====================================================
             if (showResult) ...[
                Container(
@@ -220,8 +156,7 @@ class _RoomPageState extends State<RoomPage> {
             ]
 
             // ====================================================
-            // VIEW STATE 2: WAITING SCREEN
-            // Displayed to Guests who have already submitted.
+            // STATE 2: WAITING SCREEN
             // ====================================================
             else if (isParticipantWaiting) ...[
                const SizedBox(height: 60),
@@ -239,12 +174,11 @@ class _RoomPageState extends State<RoomPage> {
             ]
 
             // ====================================================
-            // VIEW STATE 3: INPUT / VOTING SCREEN
-            // The main interface for selecting preferences.
+            // STATE 3: INPUT / VOTING SCREEN
             // ====================================================
             else if (showInputScreen) ...[
                
-               // --- SECTION A: GOOGLE MAP ---
+               // --- MAP SECTION ---
                SizedBox(
                  height: 250,
                  width: double.infinity,
@@ -253,8 +187,8 @@ class _RoomPageState extends State<RoomPage> {
                      GoogleMap(
                        mapType: MapType.normal,
                        initialCameraPosition: _kDefaultLocation,
-                       myLocationEnabled: true, // Shows blue dot if permission granted
-                       zoomControlsEnabled: false, // Clean UI
+                       myLocationEnabled: true,
+                       zoomControlsEnabled: false, 
                        markers: _markers,
                        onMapCreated: (GoogleMapController controller) {
                          _mapController = controller;
@@ -266,9 +200,9 @@ class _RoomPageState extends State<RoomPage> {
                        child: Container(
                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                          decoration: BoxDecoration(
-                           color: Colors.white.withValues(), 
+                           color: Colors.white.withOpacity(0.9), 
                            borderRadius: BorderRadius.circular(20),
-                           boxShadow: [BoxShadow(color: Colors.black12, blurRadius: 4)]
+                           boxShadow: const [BoxShadow(color: Colors.black12, blurRadius: 4)]
                          ),
                          child: const Text(
                            "Tap a restaurant to add it!", 
@@ -284,23 +218,23 @@ class _RoomPageState extends State<RoomPage> {
                  padding: const EdgeInsets.all(20),
                  child: Column(
                    children: [
-                     // --- SECTION B: WARNINGS ---
-                     if (vm.isRoomFull)
+                     // --- WARNINGS ---
+                     if (vm.isSubmissionFull)
                        Container(
                          width: double.infinity,
                          margin: const EdgeInsets.only(bottom: 20),
                          padding: const EdgeInsets.all(12),
-                         decoration: BoxDecoration(color: Colors.red.shade50, borderRadius: BorderRadius.circular(10), border: Border.all(color: Colors.red.shade200)),
+                         decoration: BoxDecoration(color: Colors.orange.shade50, borderRadius: BorderRadius.circular(10), border: Border.all(color: Colors.orange.shade200)),
                          child: Row(
                            children: const [
-                             Icon(Icons.warning_amber_rounded, color: Colors.red),
+                             Icon(Icons.info_outline, color: Colors.orange),
                              SizedBox(width: 10),
-                             Expanded(child: Text("Maximum of 12 participants reached.", style: TextStyle(color: Colors.red, fontSize: 13))),
+                             Expanded(child: Text("Voting is full (12 votes max). You are spectating.", style: TextStyle(color: Colors.orange, fontSize: 13))),
                            ],
                          ),
                        ),
 
-                     // --- SECTION C: BUDGET SLIDER ---
+                     // --- BUDGET SLIDER ---
                      AuthBox(
                        child: Column(
                          children: [
@@ -309,40 +243,32 @@ class _RoomPageState extends State<RoomPage> {
                              values: vm.budgetRange,
                              min: 0, max: 100, divisions: 20,
                              activeColor: kPrimaryColor,
-                             // Show rounded values in labels (e.g., $20 - $50)
                              labels: RangeLabels("\$${vm.budgetRange.start.round()}", "\$${vm.budgetRange.end.round()}"),
-                             // Disable slider if user has already locked in
-                             onChanged: (vm.isRoomFull || vm.isLocked) ? null : (v) => vm.setBudget(v),
+                             // Disable if Spectating, Locked, or Host
+                             onChanged: inputsDisabled ? null : (v) => vm.setBudget(v),
                            ),
                          ],
                        ),
                      ),
                      const SizedBox(height: 20),
 
-                     // --- SECTION D: CUISINE CHIPS (Quick Select) ---
+                     // --- CUISINE CHIPS ---
                      AuthBox(
                        child: Column(
                          crossAxisAlignment: CrossAxisAlignment.start,
                          children: [
                            Row(
                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                             children: [
-                               const Text("Quick Select Cuisines", style: TextStyle(fontWeight: FontWeight.bold)),
-                               // Manual Add Button (Pencil Icon)
-                               if (!vm.isLocked)
-                                 IconButton(
-                                   icon: const Icon(Icons.edit, size: 20, color: Colors.grey),
-                                   onPressed: () => _showAddDialog(context, vm),
-                                   tooltip: "Add Custom",
-                                 ),
+                             children: const [
+                               Text("Quick Select Cuisines", style: TextStyle(fontWeight: FontWeight.bold)),
+                               // Custom Add Button Removed as per requirement
                              ],
                            ),
                            const SizedBox(height: 10),
                            
-                           // Using Wrap to create a flowing layout of chips
                            Wrap(
-                             spacing: 8.0, // Horizontal gap
-                             runSpacing: 4.0, // Vertical gap
+                             spacing: 8.0, 
+                             runSpacing: 4.0, 
                              children: _cuisineOptions.map((cuisine) {
                                final isSelected = vm.preferences.contains(cuisine);
                                return FilterChip(
@@ -354,8 +280,8 @@ class _RoomPageState extends State<RoomPage> {
                                    color: isSelected ? kPrimaryColor : Colors.black87,
                                    fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
                                  ),
-                                 // Toggle logic
-                                 onSelected: vm.isLocked ? null : (bool selected) {
+                                 // Disable if Spectating, Locked, or Host
+                                 onSelected: inputsDisabled ? null : (bool selected) {
                                    if (selected) {
                                      vm.addPreference(cuisine);
                                    } else {
@@ -370,8 +296,7 @@ class _RoomPageState extends State<RoomPage> {
                      ),
                      const SizedBox(height: 20),
 
-                     // --- SECTION E: SELECTED LIST VIEW ---
-                     // Displays everything the user has selected (Map picks + Cuisines)
+                     // --- SELECTED LIST VIEW ---
                      if (vm.preferences.isNotEmpty)
                        AuthBox(
                          child: Column(
@@ -380,7 +305,6 @@ class _RoomPageState extends State<RoomPage> {
                              const Text("Your Selection", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.grey)),
                              const SizedBox(height: 5),
                              ...vm.preferences.map((pref) {
-                               // Determine Icon: Is it a generic cuisine or a specific place?
                                final isKnownCuisine = _cuisineOptions.contains(pref);
                                return ListTile(
                                  dense: true,
@@ -390,7 +314,8 @@ class _RoomPageState extends State<RoomPage> {
                                    color: isKnownCuisine ? kPrimaryColor : Colors.blue
                                  ),
                                  title: Text(pref),
-                                 trailing: vm.isLocked ? null : IconButton(
+                                 // Disable delete if Spectating, Locked, or Host
+                                 trailing: inputsDisabled ? null : IconButton(
                                    icon: const Icon(Icons.close, color: Colors.grey, size: 20),
                                    onPressed: () => vm.removePreference(pref)
                                  ),
@@ -402,16 +327,15 @@ class _RoomPageState extends State<RoomPage> {
 
                      const SizedBox(height: 30),
 
-                     // --- SECTION F: ACTION BUTTONS ---
+                     // --- ACTION BUTTONS ---
                      if (vm.isHost)
-                       // HOST VIEW: "Generate Recommendation"
+                       // HOST VIEW
                        Column(
                          children: [
                            SizedBox(
                              width: double.infinity, height: 60,
                              child: ElevatedButton(
                                style: ElevatedButton.styleFrom(
-                                 // Button is Green if ready, Grey if waiting
                                  backgroundColor: vm.allParticipantsReady ? Colors.green : Colors.grey,
                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
                                ),
@@ -425,21 +349,23 @@ class _RoomPageState extends State<RoomPage> {
                              ),
                            ),
                            const SizedBox(height: 10),
-                           Text("${vm.participants.length} joined (Max 12)", style: const TextStyle(color: Colors.grey)),
+                           Text("${vm.participants.length} joined", style: const TextStyle(color: Colors.grey)),
                          ],
                        )
                      else
-                       // GUEST VIEW: "Submit Preferences"
+                       // GUEST VIEW
                        SizedBox(
                          width: double.infinity, height: 60,
                          child: ElevatedButton(
                            style: ElevatedButton.styleFrom(
-                             backgroundColor: (vm.isRoomFull || vm.isLocked) ? Colors.grey : kPrimaryColor,
+                             // Disable if Voting is Full OR User already submitted
+                             backgroundColor: (vm.isSubmissionFull || vm.isLocked) ? Colors.grey : kPrimaryColor,
                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
                            ),
-                           onPressed: (vm.isRoomFull || vm.isLocked) ? null : () => vm.lockSelection(),
+                           // Disable if Voting is Full OR User already submitted
+                           onPressed: (vm.isSubmissionFull || vm.isLocked) ? null : () => vm.lockSelection(),
                            child: Text(
-                             vm.isRoomFull ? "Room Full" : "Submit Preferences",
+                             vm.isSubmissionFull ? "Voting Full (Spectator)" : "Submit Preferences",
                              style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
                            ),
                          ),
@@ -454,7 +380,6 @@ class _RoomPageState extends State<RoomPage> {
         ),
       ),
       
-      // --- BOTTOM NAVIGATION ---
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: 1, 
         onTap: _handleBottomNavTap, 

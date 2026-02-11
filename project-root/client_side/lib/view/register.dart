@@ -24,15 +24,32 @@ class _RegisterPageState extends State<RegisterPage> {
   
   // -- Hardcoded Data Lists --
   final List<String> _availableCuisines = [
-    'Italian', 'Chinese', 'Japanese', 'Mexican', 
-    'Indian', 'Thai', 'American', 'French', 
-    'Mediterranean', 'Korean', 'Vietnamese', 'Fast Food'
+    'American', 
+    'Arab', 
+    'Chinese', 
+    'Fast Food', 
+    'French', 
+    'Indian', 
+    'Indonesian',
+    'Italian', 
+    'Japanese', 
+    'Korean', 
+    'Malay', 
+    'Mamak',
+    'Mediterranean', 
+    'Mexican', 
+    'Nyonya',
+    'Seafood',
+    'Thai', 
+    'Vegetarian',
+    'Vietnamese', 
+    'Western',
   ];
 
   final List<String> _availableDietary = [
     'Vegetarian', 'Vegan', 'Gluten-Free', 
     'Halal', 'Kosher', 'Nut-Free', 
-    'Dairy-Free', 'Low-Carb', 'None'
+    'Dairy-Free', 'Low-Carb'
   ];
 
   // -- Selection State --
