@@ -220,7 +220,7 @@ def our_model(room_data: Dict[str, Any], maps_service) -> Dict[str, Any]:
             "recommended_place_id": result.get("recommended_place_id"),
             "recommended_cuisine": result.get("recommended_cuisine"),
             "budget": (result.get("budget") or []),
-            "justification": justification,
+            "justification": justification.text,
         }
 
     except Exception as e:
