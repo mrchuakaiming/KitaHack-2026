@@ -3,7 +3,7 @@
 # =========================
 fastapi==0.109.0
 uvicorn[standard]==0.23.2
-pydantic==2.6.1
+pydantic>=2.9.0,<3.0.0 
 
 # =========================
 # Environment variables
@@ -13,7 +13,7 @@ python-dotenv==1.0.0
 # =========================
 # Google APIs
 # =========================
-google-generativeai==0.2.0
+google-genai==0.2.0
 googlemaps==4.10.0
 google-api-core==2.12.0
 
