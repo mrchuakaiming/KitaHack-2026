@@ -1,5 +1,4 @@
 // integration_test/test_main.dart
-
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:firebase_core/firebase_core.dart';
@@ -28,9 +27,8 @@ Future<void> main() async {
   await Firebase.initializeApp();
 
   // 3️⃣ Connect Firebase SDKs to emulators
-  // ⚠️ Use '10.0.2.2' for Android emulator; 'localhost' for iOS/macOS
   const host = String.fromEnvironment('FIREBASE_EMULATOR_HOST', defaultValue: 'localhost');
-
+  
   FirebaseAuth.instance.useAuthEmulator(host, 9099);
   FirebaseFirestore.instance.useFirestoreEmulator(host, 8080);
   FirebaseDatabase.instance.useDatabaseEmulator(host, 9000);

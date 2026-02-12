@@ -12,7 +12,7 @@ void registerUserTests() {
   group('REGISTER USER — Integration Tests', () {
     setUp(() async {
       // Clear Auth emulator and Firestore before each test
-      await FirebaseAuth.instance.useAuthEmulator('localhost', 9099);
+      // await FirebaseAuth.instance.useAuthEmulator('localhost', 9099);
       await FirebaseAuth.instance.signOut();
 
       // Delete all users in Auth emulator
