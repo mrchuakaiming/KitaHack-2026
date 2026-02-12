@@ -29,6 +29,7 @@ import 'new_room_test.dart';
 import 'join_room_test.dart';
 import 'submit_preference_test.dart';
 import 'leave_room_test.dart';
+import 'generate_recommendation_test.dart';
 import 'store_recommendation_test.dart';
 import 'want_result_test.dart';
 import 'delete_account_test.dart';
@@ -54,6 +55,7 @@ Future<void> main() async {
   joinRoomTests();
   submitPreferenceTests();
   leaveRoomTests();
+  generateRecommendationTests();
   storeRecommendationTests();
   wantResultTests();
   deleteAccountTests();
