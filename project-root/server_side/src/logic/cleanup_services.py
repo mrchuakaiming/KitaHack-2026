@@ -27,7 +27,7 @@ firestore_service = FirestoreService()
 # ============================
 # OFFLINE PARTICIPANT CLEANUP
 # ============================
-async def cleanup_offline_participants():
+def cleanup_offline_participants():
     """
     Remove participants who have been offline beyond the allowed threshold 
     and have not submitted, across all rooms in the Realtime Database (RTDB).
@@ -66,7 +66,8 @@ async def cleanup_offline_participants():
                     # Check if the participant has been offline longer than the threshold
                     if now_ms - disconnected_at >= OFFLINE_THRESHOLD_MS:
                         # Remove participant from the room in RTDB (async operation)
-                        await rtdb_service.delete_participant(room_id=room_id, uid=uid)
+                        # CHANGED: Removed 'await' - this is now synchronous
+                        rtdb_service.delete_participant(room_id=room_id, uid=uid)
 
     except Exception as e:
         raise Exception(f"[Cleanup] Failed offline participant cleanup: {e}")
@@ -75,7 +76,7 @@ async def cleanup_offline_participants():
 # ============================
 # EXPIRED ROOM CLEANUP
 # ============================
-async def cleanup_expired_rooms():
+def cleanup_expired_rooms():
     """
     Delete all rooms whose expiryTime has passed.
 
@@ -106,13 +107,16 @@ async def cleanup_expired_rooms():
             if expiry and expiry.timestamp() <= now_ts:
                 #RTDB cleanup
                 # Delete participants in RTDB
-                await rtdb_service.delete_room(room_id)
+                # [CHANGE]: Removed 'await' because delete_room is synchronous
+                rtdb_service.delete_room(room_id)
 
                 #Firestore cleanup
                 # Delete preferences in Firestore
-                await firestore_service.delete_preferences(room_id)
+                # [CHANGE]: Removed 'await' - assuming FirestoreService is also synchronous
+                firestore_service.delete_preferences(room_id)
                 # Delete the room itself
-                await firestore_service.delete_room(room_id)
+                # [CHANGE]: Removed 'await'
+                firestore_service.delete_room(room_id)
 
     except Exception as e:
         raise Exception(f"[Cleanup] Failed expired room cleanup: {e}")

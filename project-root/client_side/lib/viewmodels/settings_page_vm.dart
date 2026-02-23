@@ -4,46 +4,71 @@ import 'package:firebase_auth/firebase_auth.dart';
 // [IMPORT] Business Logic & Services
 import '../coordinators/coordinator.dart';
 import '../models/user.dart';
+import '../services/firestore_service.dart';
 import '../services/analytics_service.dart';
 
-/// **ViewModel for Settings & Profile Management**
-///
-/// **Architectural Scope:**
-/// This ViewModel is strictly scoped to **Account Mutations** (Write Operations).
-/// It does **not** manage the "Read" state of the user profile (fetching initial data),
-/// as that is handled by the View (or a separate UserProvider) to keep this logic
-/// focused purely on transactional actions.
+/// **SettingsViewModel**
+/// ----------------------------------------------------------------------------
+/// **Role:**
+/// Manages the state, data fetching, and UI logic for the [SettingsPage].
 ///
 /// **Responsibilities:**
-/// 1.  **Profile Updates:** Modifying username, cuisines, and dietary restrictions.
-/// 2.  **Security:** Sending password reset emails.
-/// 3.  **Destructive Actions:** Permanently deleting the account.
-/// 4.  **Analytics:** Logging key account lifecycle events.
+/// 1.  **Data Management:** Fetches and holds the current [UserModel].
+/// 2.  **State Management:** Handles local edits (Cuisines/Dietary) before saving.
+/// 3.  **Action Delegation:** Calls [Coordinator] for updates, resets, and deletions.
+/// 4.  **UI Feedback:** Manages `_errorMessage` for SnackBars.
+/// ----------------------------------------------------------------------------
 class SettingsViewModel extends ChangeNotifier {
   
   // ====================================================================
-  // DEPENDENCIES
+  // CONSTANTS (Configuration)
   // ====================================================================
   
-  /// The Coordinator handles the complex sequence of Firestore/Auth operations.
+  static const List<String> availableCuisines = [
+    'American', 'Arab', 'Chinese', 'French', 'Indian', 
+    'Indonesian', 'Italian', 'Japanese', 'Korean', 'Malay', 'Mamak',
+    'Mediterranean', 'Mexican', 'Nyonya', 'Thai',
+    'Vietnamese', 'Western'
+  ];
+
+  static const List<String> availableDietary = [
+  'Dairy-Free',
+  'Gluten-Free',
+  'Halal',
+  'Kosher',
+  'Low-Carb',
+  'Nut-Free',
+  'Seafood',
+  'Vegan'
+  ];
+
+  // ====================================================================
+  // DEPENDENCIES
+  // ====================================================================
   final Coordinator _coordinator;
+  final FirestoreService _firestore;
 
   // ====================================================================
   // STATE PROPERTIES
   // ====================================================================
   
-  /// `true` if a network operation (update, delete, email) is in progress.
   bool _isLoading = false;
-
-  /// Holds the latest error message for UI display. `null` if no error.
   String? _errorMessage;
+  UserModel? _currentUser;
+
+  // -- Local Selection State (Temporary buffers) --
+  final Set<String> _selectedCuisines = {};
+  final Set<String> _selectedDietary = {};
 
   // ====================================================================
   // CONSTRUCTOR
   // ====================================================================
   
-  SettingsViewModel({Coordinator? coordinator}) 
-      : _coordinator = coordinator ?? Coordinator();
+  SettingsViewModel({
+    Coordinator? coordinator, 
+    FirestoreService? firestore
+  }) : _coordinator = coordinator ?? Coordinator(),
+       _firestore = firestore ?? FirestoreService();
 
   // ====================================================================
   // GETTERS
@@ -51,147 +76,152 @@ class SettingsViewModel extends ChangeNotifier {
   
   bool get isLoading => _isLoading;
   String? get errorMessage => _errorMessage;
+  UserModel? get currentUser => _currentUser;
+  
+  List<String> get selectedCuisines => _selectedCuisines.toList();
+  List<String> get selectedDietary => _selectedDietary.toList();
 
   // ====================================================================
-  // 1. UPDATE PROFILE
+  // 0. LOAD DATA
   // ====================================================================
 
-  /// Updates the user's mutable profile fields.
-  ///
-  /// **Flow:**
-  /// 1.  Checks if a user is currently logged in.
-  /// 2.  Wraps inputs into a [UserModel].
-  /// 3.  Delegates to [Coordinator.updateProfile].
-  /// 4.  **Analytics:** Logs 'profile_update' on success.
-  ///
-  /// **Parameters:**
-  /// * [username]: New display name.
-  /// * [cuisines]: Updated list of food preferences.
-  /// * [dietary]: Updated list of restrictions.
-  ///
-  /// **Returns:** `true` if successful.
-  Future<bool> updateProfile({
-    required String username,
-    required List<String> cuisines,
-    required List<String> dietary,
-  }) async {
+  /// Fetches the user profile and syncs local state.
+  Future<void> loadCurrentUser() async {
     _setLoading(true);
-    _clearError();
-
-    // Fail-safe: Ensure we have a UID to update
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) {
-      _errorMessage = "You must be logged in to update your profile.";
-      _setLoading(false);
-      return false;
-    }
-
     try {
-      // Construct the model. 
-      // Note: Immutable fields (email/hostedRooms) are ignored by the 
-      // Coordinator's update logic, but required by the Model constructor.
-      final updatedModel = UserModel(
-        uid: user.uid,
-        email: user.email ?? '', 
-        username: username.trim(),
-        preferredCuisine: cuisines,
-        dietaryRestrictions: dietary,
-        hostedRooms: [], 
-      );
-
-      // 1. DELEGATION
-      await _coordinator.updateProfile(updated: updatedModel);
-      
-      // 2. ANALYTICS
-      // Track that the user cares enough to customize their profile
-      await AnalyticsService().logEvent(
-        'profile_update', 
-        params: {
-          'cuisine_count': cuisines.length,
-          'dietary_count': dietary.length,
+      final uid = FirebaseAuth.instance.currentUser?.uid;
+      if (uid != null) {
+        _currentUser = await _firestore.getUser(uid);
+        
+        if (_currentUser != null) {
+          _selectedCuisines.clear();
+          _selectedCuisines.addAll(_currentUser!.preferredCuisine);
+          
+          _selectedDietary.clear();
+          _selectedDietary.addAll(_currentUser!.dietaryRestrictions);
         }
-      );
-
-      _setLoading(false);
-      return true;
-
+      }
     } catch (e) {
-      _errorMessage = "Update failed: ${e.toString()}";
-      _setLoading(false);
-      return false;
-    }
-  }
-
-  // ====================================================================
-  // 2. RESET PASSWORD
-  // ====================================================================
-
-  /// Triggers a password reset email via Firebase Auth.
-  Future<void> resetPassword() async {
-    _setLoading(true);
-    _clearError();
-
-    final user = FirebaseAuth.instance.currentUser;
-    final email = user?.email;
-
-    if (email == null || email.isEmpty) {
-      _errorMessage = "No email found for this user.";
-      _setLoading(false);
-      return;
-    }
-
-    try {
-      // 1. DELEGATION
-      await _coordinator.resetPassword(email);
-      
-      // 2. ANALYTICS
-      await AnalyticsService().logEvent('password_reset_request', params: {'source': 'settings'});
-
-    } catch (e) {
-      _errorMessage = "Failed to send reset email: ${e.toString()}";
+      _errorMessage = "Failed to load profile: $e";
     } finally {
       _setLoading(false);
     }
   }
 
   // ====================================================================
-  // 3. DELETE ACCOUNT
+  // 1. TOGGLE SELECTIONS
   // ====================================================================
 
-  /// Permanently deletes the user's account and all associated data.
-  ///
-  /// **Flow:**
-  /// 1.  Calls [Coordinator.deleteAccount].
-  /// 2.  **Analytics:** Logs 'account_deleted' immediately before returning.
-  ///
-  /// **Returns:**
-  /// * `true` if successful (Signal to View to navigate to Login).
-  /// * `false` if failed (e.g., requires recent login).
-  Future<bool> deleteAccount() async {
+  void toggleCuisine(String cuisine) {
+    if (_selectedCuisines.contains(cuisine)) {
+      _selectedCuisines.remove(cuisine);
+    } else {
+      _selectedCuisines.add(cuisine);
+    }
+    notifyListeners();
+  }
+
+  void toggleDietary(String restriction) {
+    if (_selectedDietary.contains(restriction)) {
+      _selectedDietary.remove(restriction);
+    } else {
+      _selectedDietary.add(restriction);
+    }
+    notifyListeners();
+  }
+
+  // ====================================================================
+  // 2. UPDATE PROFILE
+  // ====================================================================
+
+  Future<bool> updateProfile({required String username}) async {
     _setLoading(true);
     _clearError();
-    
-    try {
-      // 1. DELEGATION (Destructive Action)
-      await _coordinator.deleteAccount();
-      
-      // 2. ANALYTICS
-      // Important for churn analysis
-      await AnalyticsService().logEvent('account_deleted');
-      
+
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) {
+      _errorMessage = "You must be logged in.";
       _setLoading(false);
-      return true; 
+      return false;
+    }
+
+    try {
+      final updatedModel = UserModel(
+        uid: user.uid,
+        email: user.email ?? '', 
+        username: username.trim(),
+        preferredCuisine: _selectedCuisines.toList(),
+        dietaryRestrictions: _selectedDietary.toList(),
+        hostedRooms: _currentUser?.hostedRooms ?? [],
+      );
+
+      await _coordinator.updateProfile(updated: updatedModel);
+      _currentUser = updatedModel;
+
+      await AnalyticsService().logEvent('profile_update', params: {
+        'cuisine_count': _selectedCuisines.length,
+      });
+
+      _setLoading(false);
+      return true;
 
     } catch (e) {
-      // Handles specific errors like 'requires-recent-login'
-      _errorMessage = e.toString().replaceAll("Exception: ", "");
+      _errorMessage = "Update failed: $e";
       _setLoading(false);
       return false;
     }
   }
 
   // ====================================================================
-  // INTERNAL HELPERS
+  // 3. ACCOUNT ACTIONS
+  // ====================================================================
+
+  Future<void> resetPassword() async {
+    _setLoading(true);
+    _clearError();
+    try {
+      final email = FirebaseAuth.instance.currentUser?.email;
+      if (email != null) {
+        await _coordinator.resetPassword(email);
+      } else {
+        _errorMessage = "No email found.";
+      }
+    } catch (e) {
+      _errorMessage = "Reset failed: $e";
+    } finally {
+      _setLoading(false);
+    }
+  }
+
+  Future<bool> deleteAccount() async {
+    _setLoading(true);
+    try {
+      await _coordinator.deleteAccount();
+      return true; 
+    } catch (e) {
+      _errorMessage = e.toString();
+      _setLoading(false);
+      return false;
+    }
+  }
+
+  // ====================================================================
+  // 4. NAVIGATION BLOCKING LOGIC (UI Helper)
+  // ====================================================================
+
+  /// **showCreateRoomBlockedMessage**
+  /// 
+  /// Sets the internal error message string when the user attempts to 
+  /// create a room from the Settings page. This string is then read by the UI
+  /// to display the SnackBar.
+  void showCreateRoomBlockedMessage() {
+    _errorMessage = "Restricted: Please return to the Home page using the HOME button to create a room.";
+    // We notify listeners so the UI can read 'errorMessage' immediately
+    notifyListeners();
+  }
+
+  // ====================================================================
+  // HELPERS
   // ====================================================================
 
   void _setLoading(bool value) {

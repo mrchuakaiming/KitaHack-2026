@@ -1,19 +1,75 @@
-# ===========================
-# macOS / Miscellaneous
-# ===========================
+# ==============================================================================
+# SYSTEM & MISC (macOS, Windows, Linux)
+# ==============================================================================
 .DS_Store
 ../.DS_Store
-*.log
-*.pyc
-*.swp
-*.class
+Thumbs.db
 *.tmp
 *.bak
 *.old
+*.swp
+*.lock
 
-# ===========================
-# Flutter / Dart
-# ===========================
+# ==============================================================================
+# LOGS & RUNTIME DATA
+# ==============================================================================
+logs
+*.log
+*-debug.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+firebase-debug.log*
+firebase-debug.*.log*
+firestore-debug.log
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# ==============================================================================
+# ENVIRONMENT & SECRETS (CRITICAL)
+# ==============================================================================
+# This ignores .env in root, client_side, and server_side folders
+.env/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# ==============================================================================
+# FIREBASE CONFIG & EMULATORS
+# ==============================================================================
+.firebase/
+.dataconnect
+emulator-data/
+*.jar
+
+# NOTE: If you want team members to use different project aliases, 
+# uncomment the line below. Otherwise, keep it commented to share .firebaserc.
+# .firebaserc
+
+# ==============================================================================
+# NODE.JS / BACKEND (server_side)
+# ==============================================================================
+node_modules/
+bower_components/
+build/Release
+lib-cov
+coverage
+.nyc_output
+.grunt
+.lock-wscript
+.npm
+.eslintcache
+.node_repl_history
+*.tgz
+.yarn-integrity
+
+# ==============================================================================
+# FLUTTER / DART (client_side)
+# ==============================================================================
 .dart_tool/
 .packages
 .pub/
@@ -22,48 +78,24 @@ build/
 .flutter-plugins
 .flutter-plugins-dependencies
 .pub-cache/
-.flutter-plugins-dependencies
 **/ios/Flutter/.last_build_id
 
-# ===========================
-# Android
-# ===========================
+# Android specific
 /android/.gradle/
 /android/app/debug
 /android/app/profile
 /android/app/release
 /local.properties
 
-# ===========================
-# Xcode / iOS
-# ===========================
+# iOS specific
 ios/Flutter/Flutter.podspec
 ios/Pods/
 ios/Runner.xcworkspace/
 ios/Runner/GeneratedPluginRegistrant.*
 
-# ===========================
-# Python backend
-# ===========================
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-*.env
-venv/
-.env/
-
-# ===========================
-# Firebase emulator logs
-# ===========================
-*-debug.log
-*.jar
-emulator-data/
-
-
-# ===========================
-# IDEs
-# ===========================
+# ==============================================================================
+# IDEs & EDITORS
+# ==============================================================================
 # VS Code
 .vscode/
 
@@ -72,12 +104,3 @@ emulator-data/
 *.ipr
 *.iws
 .idea/
-
-# ===========================
-# Other
-# ===========================
-*.swp
-*.lock
-*.tmp
-*.bak
-*.old

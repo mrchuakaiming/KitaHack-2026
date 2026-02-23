@@ -1,49 +1,42 @@
 import 'package:flutter/material.dart';
 
-/// A custom bottom navigation bar widget used across the main screens of the application.
+/// **Custom Bottom Navigation Bar**
 ///
-/// This widget provides a consistent navigation interface, allowing users to switch
-/// between the core functionalities: Creating a Room (represented by a burger icon),
-/// returning to the Home dashboard, and accessing User Profile settings.
+/// **Indices Mapping:**
+/// * `0` -> Create Room (Action)
+/// * `1` -> Home (Current Page)
+/// * `2` -> Settings (Navigation)
 class CustomBottomNav extends StatelessWidget {
-  /// The index of the currently active tab.
-  ///
-  /// * `0`: Create / New Room (Burger Icon)
-  /// * `1`: Home Dashboard (Home Icon)
-  /// * `2`: Profile / Settings (Person Icon)
-  ///
-  /// This must be passed by the parent widget to ensure the correct icon is highlighted.
   final int currentIndex;
+  
+  /// Callback to allow the parent (Home) to intercept taps (e.g., for "Create Room").
+  final Function(int)? onTap; 
 
-  /// Creates a [CustomBottomNav].
-  ///
-  /// Requires [currentIndex] to highlight the active tab.
-  const CustomBottomNav({super.key, required this.currentIndex});
+  const CustomBottomNav({
+    super.key, 
+    required this.currentIndex,
+    this.onTap, 
+  });
 
-  /// Handles tap events on the navigation items.
-  ///
-  /// Uses [Navigator.pushReplacementNamed] to switch screens. This replaces the
-  /// current route with the new one, preventing the "back button" stack from
-  /// growing indefinitely as the user toggles between tabs.
-  ///
-  /// * [context]: The build context used for navigation.
-  /// * [index]: The index of the tapped navigation item.
   void _onItemTapped(BuildContext context, int index) {
-    // Optimization: Do nothing if the user taps the tab they are already on.
+    // 1. Priority: Delegate to Parent
+    // This fixes the issue where taps were ignored or misrouted.
+    if (onTap != null) {
+      onTap!(index);
+      return;
+    }
+
+    // 2. Default Navigation (Fallback)
     if (index == currentIndex) return;
 
     switch (index) {
-      case 0: // "Create" Tab (Burger Icon)
-        // Currently routes to '/home' where the "Create Room" logic resides.
-        // In the future, this could route to a dedicated creation screen.
+      case 0: // Create Room
+        Navigator.pushReplacementNamed(context, '/home'); 
+        break;
+      case 1: // Home
         Navigator.pushReplacementNamed(context, '/home');
         break;
-      case 1: // "Home" Tab
-        // Routes to the main dashboard.
-        Navigator.pushReplacementNamed(context, '/home');
-        break;
-      case 2: // "Profile" Tab
-        // Routes to the settings/profile page.
+      case 2: // Settings
         Navigator.pushReplacementNamed(context, '/settings');
         break;
     }
@@ -51,27 +44,46 @@ class CustomBottomNav extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return BottomNavigationBar(
-      currentIndex: currentIndex,
-      onTap: (index) => _onItemTapped(context, index),
-      // Visual styling for the navigation bar
-      backgroundColor: Colors.white,
-      selectedItemColor: Colors.black, // Color for the active tab icon/label
-      unselectedItemColor: Colors.grey, // Color for inactive tab icons/labels
-      showSelectedLabels: true,
-      showUnselectedLabels: true,
-      // 'fixed' type ensures items don't shift position when selected
-      type: BottomNavigationBarType.fixed,
-      items: const [
-        // Index 0: The "Burger" button, conceptually for creating new sessions.
-        BottomNavigationBarItem(icon: Icon(Icons.lunch_dining), label: 'Create'),
+    return Container(
+      decoration: const BoxDecoration(
+        boxShadow: [
+          BoxShadow(color: Colors.black12, blurRadius: 10, spreadRadius: 1),
+        ],
+      ),
+      child: BottomNavigationBar(
+        currentIndex: currentIndex,
+        onTap: (index) => _onItemTapped(context, index),
         
-        // Index 1: The standard Home navigation.
-        BottomNavigationBarItem(icon: Icon(Icons.home), label: 'Home'),
+        backgroundColor: Colors.white,
+        selectedItemColor: Colors.black,
+        unselectedItemColor: Colors.grey,
+        type: BottomNavigationBarType.fixed,
+        showSelectedLabels: true,
+        showUnselectedLabels: true,
+        elevation: 0,
         
-        // Index 2: Access to user profile and settings.
-        BottomNavigationBarItem(icon: Icon(Icons.person), label: 'Profile'),
-      ],
+        iconSize: 32.0,
+        selectedFontSize: 16.0,
+        unselectedFontSize: 14.0,
+
+        items: const [
+          // Index 0: Create Room (Burger Icon)
+          BottomNavigationBarItem(
+            icon: Icon(Icons.lunch_dining),
+            label: 'Create Room',
+          ),
+          // Index 1: Home (Home Icon)
+          BottomNavigationBarItem(
+            icon: Icon(Icons.home),
+            label: 'Home',
+          ),
+          // Index 2: Settings (Gear Icon)
+          BottomNavigationBarItem(
+            icon: Icon(Icons.settings),
+            label: 'Settings',
+          ),
+        ],
+      ),
     );
   }
 }

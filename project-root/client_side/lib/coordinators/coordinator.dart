@@ -1,3 +1,5 @@
+/// CHANGED generateRecommendation(): Future<string, string> to Future<dynamic>
+
 import 'package:firebase_auth/firebase_auth.dart';
 import '../services/auth_service.dart';
 import '../services/firestore_service.dart';
@@ -814,7 +816,8 @@ Future<void> leaveRoom({
 /// - Reads preferences from Firestore
 /// - Sends to AI service
 /// - Does NOT touch RTDB
-Future<Map<String, String>> generateRecommendation({
+/// CHANGED generateRecommendation(): Future<string, string> to Future<dynamic>
+Future<dynamic> generateRecommendation({
   required String roomId,
 }) async {
   // Fetch all preferences for the room

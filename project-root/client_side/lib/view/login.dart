@@ -66,8 +66,8 @@ class _LoginPageState extends State<LoginPage> {
             
             // --- HEADER ---
             const AuthHeader(
-              title: "Welcome Back",
-              subtitle: "Sign in to continue planning.",
+              title: "Welcome Back to What2Eat",
+              subtitle: "Sign in",
             ),
 
             // --- FORM BOX ---

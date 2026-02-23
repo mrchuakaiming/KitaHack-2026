@@ -1,331 +1,422 @@
 import 'dart:async';
+import 'dart:convert';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_database/firebase_database.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:http/http.dart' as http; 
 
-// [IMPORT] Business Logic & Services
+import '../config.dart'; 
 import '../coordinators/coordinator.dart';
 import '../models/preferences.dart';
 import '../services/firestore_service.dart';
-import '../services/analytics_service.dart';
 
-/// **ViewModel for the Active Room Session**
-///
-/// **Architectural Role:**
-/// This class is the "Brain" of the Room/Lobby screen. It acts as the bridge
-/// between the UI (View) and the Backend logic (Coordinator).
-///
-/// **Key Responsibilities:**
-/// 1. **Real-Time Sync:** Listens to the Firestore Room document.
-/// 2. **Permissions:** Enforces Host vs. Guest restrictions.
-/// 3. **Capacity Management:** Enforces the "12 Responses" limit (1 Host + 11 Guests).
-/// 4. **Host Logic:** Ensures Host cannot vote but can generate results.
+/// ==============================================================================
+/// ROOM VIEW MODEL
+/// ==============================================================================
+/// This class acts as the "Brain" for the Room Page. It bridges the UI with 
+/// Firestore, Realtime Database, and the Python AI Backend.
+/// 
+/// **KEY RESPONSIBILITIES:**
+/// 1. **Session Management**: Handles joining, leaving, and identifying Host vs Guest.
+/// 2. **State Management**: Tracks if the room is "Locked" (user submitted) or "Processing".
+/// 3. **Real-time Sync**: Listens to the Realtime Database to count how many users are ready.
+/// 4. **AI Integration**: Sends the gathered data to the Python Cloud Function.
+/// ==============================================================================
 class RoomViewModel extends ChangeNotifier {
-
-  // --- CONSTANTS ---
-  /// The hard limit on how many *submissions* are accepted.
-  /// Composition: 1 Host (Auto-submitted) + 11 Guests.
-  /// Note: There is NO limit on how many people can *join* (view) the room.
-  static const int maxSubmissions = 12;
-
-  // ====================================================================
-  // DEPENDENCIES
-  // ====================================================================
-
   final Coordinator _coordinator;
   final FirestoreService _firestore;
 
-  // ====================================================================
-  // STATE PROPERTIES
-  // ====================================================================
+  /// The hard limit on how many preferences a single user can select.
+  static const int MAX_PREFS = 3;
 
+  // --- 1. STATE VARIABLES ---
+  
+  /// The unique identifier for the current active room.
   String _roomId = "";
-  String get _uid => FirebaseAuth.instance.currentUser?.uid ?? '';
-
-  // --- Local User Selections ---
-  RangeValues _budgetRange = const RangeValues(20, 50);
-  List<String> _localPreferences = [];
-
-  // --- Flags ---
-  bool _isLocked = false;
-  bool _isLoading = false;
-
-  // --- Remote Room State ---
+  
+  /// Controls the loading spinners in the UI during network requests.
+  bool _isLoading = true;
+  
+  /// Determines if the current user created the room. Hosts manage the session but do not vote.
   bool _isHost = false;
-  List<PreferencesModel> _participants = []; // List of those who have "Submitted" (or Host)
-  Map<String, dynamic>? _recommendation;
+  
+  /// If true, the user has successfully submitted their choices and the UI is disabled.
+  bool _isLocked = false; 
+  
+  /// Holds any error messages to be displayed via SnackBar in the UI.
+  String? _errorMessage;
 
-  StreamSubscription? _roomSubscription;
+  // --- 2. DATA VARIABLES ---
+  
+  /// The count of users who have clicked "Submit". Watched by the Host to know when to start generation.
+  int _submittedCount = 0; 
+  
+  /// The final AI result containing the restaurant name, price range, and justification.
+  Map<String, dynamic>? _recommendation; 
+  
+  /// Raw participant data collected from Realtime Database (used for payload construction).
+  List<Map<String, dynamic>> _collectedParticipants = [];
 
-  // ====================================================================
-  // CONSTRUCTOR
-  // ====================================================================
+  // --- 3. LOCAL SELECTION STATE ---
+  
+  /// A temporary list of specific restaurants the user has selected via Google Maps.
+  final List<Map<String, dynamic>> _selectedRestaurants = [];
+  
+  /// A temporary set of general cuisines the user has selected.
+  final Set<String> _selectedCuisines = {};
+  
+  /// The budget bounds selected by the user. Defaults to $10 - $50.
+  RangeValues _budgetRange = const RangeValues(10, 50);
 
-  RoomViewModel({Coordinator? coordinator, FirestoreService? firestore})
+  /// Subscription to listen for real-time participant count updates.
+  StreamSubscription? _participantsSubscription;
+
+  /// Constructor injects dependencies for easier testing and modularity.
+  RoomViewModel({Coordinator? coordinator, FirestoreService? db})
       : _coordinator = coordinator ?? Coordinator(),
-        _firestore = firestore ?? FirestoreService();
+        _firestore = db ?? FirestoreService();
 
-  // ====================================================================
-  // GETTERS
-  // ====================================================================
-
+  // --- 4. PUBLIC GETTERS ---
   String get roomId => _roomId;
-  RangeValues get budgetRange => _budgetRange;
-  List<String> get preferences => List.unmodifiable(_localPreferences);
-  bool get isLocked => _isLocked;
   bool get isLoading => _isLoading;
   bool get isHost => _isHost;
+  bool get isLocked => _isLocked;
+  String? get errorMessage => _errorMessage;
   Map<String, dynamic>? get recommendation => _recommendation;
-  List<PreferencesModel> get participants => _participants;
+  int get submittedCount => _submittedCount;
+  
+  List<Map<String, dynamic>> get selectedRestaurants => _selectedRestaurants;
+  RangeValues get budgetRange => _budgetRange;
+  
+  /// Returns a merged list of Cuisines and Restaurant Names for rendering the unified UI list.
+  List<String> get allPreferences => [
+        ..._selectedCuisines,
+        ..._selectedRestaurants.map((r) => r['name'] as String),
+      ];
+      
+  /// Current total of selected items across both categories.
+  int get preferenceCount => _selectedCuisines.length + _selectedRestaurants.length;
 
-  /// Helper: Returns true if there is at least one participant.
-  bool get allParticipantsReady => _participants.isNotEmpty;
+  /// ==========================================================================
+  /// INITIALIZATION
+  /// ==========================================================================
+  /// Called immediately when the Room Page loads.
+  /// 
+  /// **Logic Flow:**
+  /// 1. **Clean Slate**: Calls `clearLocalPreferences()` to wipe stale data.
+  /// 2. **Authentication**: Verifies the user is logged in.
+  /// 3. **Join Protocol**: Determines if user is Host or Guest.
+  /// 4. **Cleanup**: Registers 'onDisconnect' handlers in RTDB.
+  /// 5. **Sync**: Starts listening to the participant count stream.
+  Future<void> init(String roomId) async {
+    _roomId = roomId;
+    _isLoading = true;
+    _errorMessage = null;
+    _recommendation = null; 
+    
+    clearLocalPreferences();
+    notifyListeners();
 
-  /// Helper: Checks if the **Submission Quota** is full.
-  /// Does not prevent new users from joining, but prevents new submissions.
-  bool get isSubmissionFull => _participants.length >= maxSubmissions;
+    try {
+      final uid = FirebaseAuth.instance.currentUser?.uid ?? "";
+      if (uid.isEmpty) throw Exception("User not authenticated");
 
-  /// Returns a warning message if the voting slots are full.
-  String? get roomCapacityWarning {
-    if (isSubmissionFull) {
-      return "Voting capacity reached ($maxSubmissions responses). You can spectate.";
-    }
-    return null;
-  }
+      // 1. Join Room and determine authority level
+      final status = await _coordinator.joinRoom(roomId: roomId, uid: uid);
+      _isHost = (status == 'host');
+      _isLocked = (status == 'done_user'); 
 
-  /// Determines if the current user is allowed to interact with voting controls.
-  /// Rules:
-  /// 1. Hosts cannot vote (they are auto-done).
-  /// 2. Users cannot vote if locked.
-  bool get canVote => !_isHost && !_isLocked;
+      // 2. Register disconnection handlers
+      await _coordinator.leaveRoom(roomId: roomId, uid: uid);
 
-  // ====================================================================
-  // 1. INITIALIZATION & STREAMS
-  // ====================================================================
+      // 3. Fetch pre-existing results (handles users re-joining a finished room)
+      await _fetchExistingResult();
+      
+      // 4. Connect to live presence data
+      _subscribeToParticipants();
+      await _refreshParticipantCount();
 
-  void setRoomId(String id) {
-    if (_roomId != id && id.isNotEmpty) {
-      _roomId = id;
-      _subscribeToRoom();
-    }
-  }
-
-  void _subscribeToRoom() {
-    _roomSubscription?.cancel();
-    _roomSubscription = _firestore.roomStream(_roomId).listen((data) {
-      if (data == null) return;
-
-      if (data.containsKey('aiRecommendation')) {
-        _recommendation = data['aiRecommendation'];
-      }
-
-      if (_uid.isNotEmpty) {
-        _isHost = (data['host_uid'] == _uid);
-      }
-
-      // Sync Participants (The list of people who have been accepted/submitted)
-      if (data.containsKey('participants')) {
-        final rawParticipants = data['participants'];
-        if (rawParticipants is Map) {
-          _participants = rawParticipants.entries.map((e) {
-            if (e.value is Map) {
-              return PreferencesModel.fromJson(
-                  Map<String, dynamic>.from(e.value));
-            }
-            return PreferencesModel(
-                roomId: _roomId, livePreferences: [], preferredCuisine: [], budget: [0, 0], dietaryRestrictions: []);
-          }).toList();
-        }
-      }
+    } catch (e) {
+      debugPrint("Room Init Error: $e");
+      _errorMessage = "Failed to join room. Please try again.";
+    } finally {
+      _isLoading = false;
       notifyListeners();
-    });
+    }
+  }
+
+  /// ==========================================================================
+  /// LOCAL STATE ACTIONS
+  /// ==========================================================================
+
+  /// Clears all temporary selections and resets the budget slider.
+  /// Triggered on room entry and when a user chooses to discard unsubmitted changes.
+  void clearLocalPreferences() {
+    _selectedRestaurants.clear();
+    _selectedCuisines.clear();
+    _budgetRange = const RangeValues(10, 50); 
+    notifyListeners();
+  }
+
+  /// **RESTORED METHOD**: Updates the local budget range state.
+  /// Triggered by the RangeSlider in `room.dart`.
+  /// [newValues] The updated start and end values from the slider.
+  void updateBudget(RangeValues newValues) {
+    if (_isLocked) return;
+    _budgetRange = newValues;
+    notifyListeners();
+  }
+
+  /// Attempts to fetch a finished recommendation from Firestore.
+  /// Silently fails if the room is still active and processing.
+  Future<void> _fetchExistingResult() async {
+    try {
+      final result = await _coordinator.wantResult(roomId: _roomId);
+      if (result.isNotEmpty) {
+        _recommendation = result;
+        notifyListeners();
+      }
+    } catch (_) {}
+  }
+
+  /// Updates local state dynamically when the Firestore StreamBuilder pushes new data.
+  /// Extracts the 'output' key which contains the AI payload.
+  void updateFromStream(Map<String, dynamic> data) {
+    if (data.containsKey('output')) {
+      final output = data['output'];
+      if (output is Map && output.isNotEmpty) {
+        _recommendation = Map<String, dynamic>.from(output);
+      }
+    }
+  }
+
+  /// ==========================================================================
+  /// REALTIME DATABASE LISTENERS
+  /// ==========================================================================
+
+  /// Listens to `participants/{roomId}` in RTDB.
+  /// Parses the raw JSON map, counts users where `submitted == true`, and updates the UI.
+  void _subscribeToParticipants() {
+    _participantsSubscription?.cancel();
+    _participantsSubscription = FirebaseDatabase.instance
+        .ref("participants/$_roomId")
+        .onValue
+        .listen((event) {
+          final data = event.snapshot.value as Map<dynamic, dynamic>?;
+          if (data != null) {
+            final List<Map<String, dynamic>> temp = [];
+            int count = 0;
+            data.forEach((uid, details) {
+              if (details is Map && details['submitted'] == true) {
+                count++;
+                try {
+                   temp.add(Map<String, dynamic>.from(details));
+                } catch(e) { print(e); }
+              }
+            });
+            _submittedCount = count;
+            _collectedParticipants = temp;
+          } else {
+            _submittedCount = 0;
+            _collectedParticipants = [];
+          }
+          notifyListeners();
+        });
+  }
+
+  /// Performs a one-time static read of the RTDB participant count.
+  /// Used as a fallback and initializer before the stream fully connects.
+  Future<void> _refreshParticipantCount() async {
+    try {
+      final snapshot = await FirebaseDatabase.instance.ref("participants/$_roomId").get();
+      if (snapshot.exists) {
+        final data = snapshot.value as Map<dynamic, dynamic>;
+        int count = 0;
+        data.forEach((uid, details) {
+          if (details is Map && details['submitted'] == true) count++;
+        });
+        _submittedCount = count;
+        notifyListeners();
+      }
+    } catch (_) {}
+  }
+
+  /// ==========================================================================
+  /// UI ACTIONS & VALIDATION
+  /// ==========================================================================
+
+  /// Validates if the user is permitted to use the bottom navigation.
+  /// Prevents Hosts and Locked users from navigating away without proper teardown.
+  bool validateNavigation(int index) {
+    if (index == 1) { 
+      _errorMessage = null; 
+      return true; 
+    }
+    if (_isHost || _isLocked) {
+      _errorMessage = "Please leave the room using the Home button.";
+      notifyListeners();
+      return false;
+    }
+    return true;
+  }
+
+  /// Proxies Google Maps search queries through the Coordinator to the MapsService.
+  Future<List<Map<String, dynamic>>> searchPlaces(String query) async {
+    try { 
+      return await _coordinator.searchRestaurant(query); 
+    } catch (_) { 
+      return []; 
+    }
+  }
+
+  /// Adds a verified Google Maps place object to the local selected restaurants list.
+  /// Prevents duplicates based on the Google `placeId`.
+  bool addRestaurant(Map<String, dynamic> place) {
+    if (_isHost || _isLocked || preferenceCount >= MAX_PREFS) return false;
+    
+    if (!_selectedRestaurants.any((r) => r['placeId'] == place['placeId'])) {
+      _selectedRestaurants.add(place);
+      notifyListeners();
+      return true;
+    }
+    return false;
+  }
+
+  /// Adds a generic cuisine string to the local selected cuisines set.
+  bool addCuisine(String cuisine) {
+    if (_isHost || _isLocked || preferenceCount >= MAX_PREFS) return false;
+    _selectedCuisines.add(cuisine);
+    notifyListeners();
+    return true;
+  }
+
+  /// Removes a specific preference from either the restaurant list or the cuisine set
+  /// based on its string name.
+  void removePreferenceByName(String name) {
+    if (_isLocked) return;
+    _selectedRestaurants.removeWhere((r) => r['name'] == name);
+    _selectedCuisines.remove(name);
+    notifyListeners();
+  }
+
+  /// ==========================================================================
+  /// SUBMISSION LOGIC (GUEST)
+  /// ==========================================================================
+  /// Packages local selections, sends them to Firestore, and marks the user as 
+  /// 'submitted' in RTDB, effectively locking their UI.
+  Future<void> submitPreference() async {
+    if (_isLocked || _isHost) return;
+    if (preferenceCount == 0) {
+      _errorMessage = "Please add at least one preference!";
+      notifyListeners();
+      return;
+    }
+
+    _isLoading = true;
+    _errorMessage = null;
+    notifyListeners();
+
+    try {
+      // Unify disparate preferences into a single payload array for the AI
+      List<Map<String, dynamic>> combinedPrefs = [];
+      
+      for (var c in _selectedCuisines) {
+        combinedPrefs.add({'value': c, 'type': 'cuisine'});
+      }
+      
+      for (var r in _selectedRestaurants) {
+        combinedPrefs.add({
+          'value': r['name'], 
+          'type': 'restaurant', 
+          'placeId': r['placeId'], 
+          'lat': r['lat'], 
+          'lng': r['lng']
+        });
+      }
+
+      final prefModel = PreferencesModel(
+        roomId: _roomId,
+        livePreferences: combinedPrefs,
+        budget: [_budgetRange.start.round(), _budgetRange.end.round()],
+        preferredCuisine: _selectedCuisines.toList(), 
+        dietaryRestrictions: [], 
+      );
+
+      await _coordinator.submitPreference(
+        uid: FirebaseAuth.instance.currentUser!.uid, 
+        roomId: _roomId, 
+        preferences: prefModel
+      );
+      
+      _isLocked = true; 
+      await _refreshParticipantCount();
+      
+    } catch (e) {
+      _errorMessage = "Submission Failed: $e";
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
+  }
+
+  /// ==========================================================================
+  /// GENERATION LOGIC (HOST)
+  /// ==========================================================================
+  /// Signals the backend to begin processing the accumulated preferences.
+  /// Triggers a UI loading state for all users connected to the Firestore stream.
+  Future<void> generateRecommendation() async {
+    if (!_isHost) return;
+
+    if (_submittedCount == 0) {
+      _errorMessage = "No votes found! Wait for guests to submit.";
+      notifyListeners();
+      return;
+    }
+
+    _isLoading = true;
+    _errorMessage = null;
+    notifyListeners();
+
+    try {
+      // 1. Optimistic Update: Set room status to trigger loading animations across all clients
+      await FirebaseFirestore.instance.collection('rooms').doc(_roomId).update({
+        'status': 'processing'
+      });
+
+      // 2. Transmit gathered Realtime Database data to the Python Cloud Function
+      final String backendUrl = "${Config.serverBaseUrl}/ai/generate-outcome";
+      
+      final response = await http.post(
+        Uri.parse(backendUrl),
+        headers: {"Content-Type": "application/json"},
+        body: jsonEncode({
+          "roomId": _roomId,
+          "participants": _collectedParticipants 
+        }),
+      );
+
+      if (response.statusCode != 200) {
+        throw Exception("Server Error: ${response.body}");
+      }
+      
+    } catch (e) {
+      final errString = e.toString().replaceAll('Exception:', '').trim();
+      _errorMessage = "Generation Error: $errString";
+      
+      // Rollback optimistic update on failure to allow retries
+      await FirebaseFirestore.instance.collection('rooms').doc(_roomId).update({
+        'status': 'waiting'
+      });
+    } finally {
+      _isLoading = false; 
+      notifyListeners();
+    }
   }
 
   @override
   void dispose() {
-    _roomSubscription?.cancel();
+    _participantsSubscription?.cancel();
     super.dispose();
-  }
-
-  // ====================================================================
-  // 2. USER ACTIONS (Voting & Selection)
-  // ====================================================================
-
-  Future<List<Map<String, dynamic>>> searchRestaurant(String query) async {
-    // Hosts are not allowed to search/input preferences
-    if (_isHost) return [];
-    if (query.trim().isEmpty) return [];
-    return await _coordinator.searchRestaurant(query);
-  }
-
-  void addPreference(String item) {
-    // Host Guard: Host inputs are disabled
-    if (_isHost) return; 
-    
-    if (!_isLocked && !_localPreferences.contains(item)) {
-      _localPreferences.add(item);
-      notifyListeners();
-    }
-  }
-
-  void removePreference(String item) {
-    // Host Guard: Host inputs are disabled
-    if (_isHost) return;
-
-    if (!_isLocked) {
-      _localPreferences.remove(item);
-      notifyListeners();
-    }
-  }
-
-  void setBudget(RangeValues range) {
-    // Host Guard: Host inputs are disabled
-    if (_isHost) return;
-
-    if (!_isLocked) {
-      _budgetRange = range;
-      notifyListeners();
-    }
-  }
-
-  /// Submits the user's votes to the backend.
-  Future<void> submitPreference() async {
-    if (_uid.isEmpty || _roomId.isEmpty) return;
-
-    // 1. HOST GUARD
-    // Hosts are "Auto-Submitted" upon creation/joining.
-    // They are not allowed to submit manual preferences.
-    if (_isHost) {
-      debugPrint("Host attempted to submit preference. Action blocked.");
-      return;
-    }
-
-    // 2. CAPACITY CHECK (Race Condition Protection)
-    // If we have 12 responses (1 Host + 11 Guests), new submissions are rejected.
-    // EXCEPTION: If the user is ALREADY in the participants list, they are updating
-    // their existing vote, which is allowed.
-    if (isSubmissionFull) {
-      final isExistingParticipant = _participants.any((p) {
-        // Safe check for UID presence in the model
-        try { return (p as dynamic).uid == _uid; } catch (_) { return false; }
-      });
-
-      if (!isExistingParticipant) {
-        debugPrint("Submission rejected: Quota full ($maxSubmissions).");
-        return;
-      }
-    }
-
-    _setLoading(true);
-
-    try {
-      final prefModel = PreferencesModel(
-        roomId: _roomId,
-        livePreferences: _localPreferences.map((p) => {'value': p}).toList(),
-        budget: [_budgetRange.start.round(), _budgetRange.end.round()],
-        preferredCuisine: [],
-        dietaryRestrictions: [],
-      );
-
-      await _coordinator.submitPreference(
-        uid: _uid,
-        roomId: _roomId,
-        preferences: prefModel,
-      );
-
-      _isLocked = true;
-      
-      await AnalyticsService().logEvent(
-        'preferences_submitted',
-        params: {'room_id': _roomId, 'is_host': _isHost}
-      );
-
-    } catch (e) {
-      debugPrint("Submit failed: $e");
-      _isLocked = false;
-    } finally {
-      _setLoading(false);
-    }
-  }
-
-  void lockSelection() => submitPreference();
-
-  // ====================================================================
-  // 3. HOST ACTIONS (Generation)
-  // ====================================================================
-
-  /// Triggers the AI to generate a recommendation.
-  /// **Access:** Host Only.
-  Future<void> generateRecommendation() async {
-    // Strict Host Check
-    if (!_isHost || _roomId.isEmpty) return;
-
-    _setLoading(true);
-
-    try {
-      await AnalyticsService()
-          .logEvent('ai_generation_started', params: {'room_id': _roomId});
-
-      final result =
-          await _coordinator.generateRecommendation(roomId: _roomId);
-
-      await storeRecommendation(result);
-    } catch (e) {
-      debugPrint("Generation failed: $e");
-    } finally {
-      _setLoading(false);
-    }
-  }
-
-  Future<void> storeRecommendation(Map<String, dynamic> result) async {
-    try {
-      await _coordinator.storeRecommendation(roomId: _roomId, result: result);
-      await AnalyticsService()
-          .logEvent('ai_generation_success', params: {'room_id': _roomId});
-    } catch (e) {
-      debugPrint("Store recommendation failed: $e");
-    }
-  }
-
-  // ====================================================================
-  // 4. RESULT ACTIONS & CLEANUP
-  // ====================================================================
-
-  Future<void> wantResult() async {
-    if (_roomId.isEmpty) return;
-    try {
-      await _coordinator.wantResult(roomId: _roomId);
-      await AnalyticsService()
-          .logEvent('result_accepted', params: {'room_id': _roomId});
-    } catch (e) {
-      debugPrint("Want Result failed: $e");
-    }
-  }
-
-  Future<void> leaveRoom() async {
-    if (_uid.isNotEmpty && _roomId.isNotEmpty) {
-      try {
-        await _coordinator.leaveRoom(roomId: _roomId, uid: _uid);
-        await AnalyticsService()
-            .logEvent('room_left', params: {'room_id': _roomId});
-      } catch (e) {
-        debugPrint("Error leaving room: $e");
-      }
-    }
-
-    _roomSubscription?.cancel();
-    _roomSubscription = null;
-    _localPreferences.clear();
-    _isLocked = false;
-    _recommendation = null;
-    _isHost = false;
-    _roomId = "";
-    _participants.clear();
-
-    notifyListeners();
-  }
-
-  void _setLoading(bool value) {
-    _isLoading = value;
-    notifyListeners();
   }
 }

@@ -1,12 +1,23 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
+import 'package:flutter/services.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:provider/provider.dart';
 
-// [IMPORT] Local Widgets & ViewModel
-import 'common_widgets.dart'; 
 import '../viewmodels/room_vm.dart';
+import 'common_widgets.dart'; 
+import 'bottom_nav.dart'; 
 
-/// **RoomPage (Lobby View)**
+/// ==============================================================================
+/// ROOM PAGE
+/// ==============================================================================
+/// The central hub for the collaborative group dining session.
+/// 
+/// This widget acts as the primary view for both the "Host" and the "Guests".
+/// It listens to a live Firestore stream to update its UI across three main states:
+/// 1. **Lobby State**: Users are adding and submitting preferences.
+/// 2. **Processing State**: The AI is currently generating a recommendation.
+/// 3. **Verdict State**: The final AI recommendation is displayed to all users.
 class RoomPage extends StatefulWidget {
   const RoomPage({super.key});
 
@@ -15,381 +26,772 @@ class RoomPage extends StatefulWidget {
 }
 
 class _RoomPageState extends State<RoomPage> {
-  GoogleMapController? _mapController;
-  final Set<Marker> _markers = {};
   
-  static const CameraPosition _kDefaultLocation = CameraPosition(
-    target: LatLng(37.7749, -122.4194),
-    zoom: 14.0,
-  );
-
-  final List<String> _cuisineOptions = [
-    'American', 
-    'Arab', 
-    'Chinese', 
-    'Fast Food', 
-    'French', 
-    'Indian', 
-    'Indonesian',
-    'Italian', 
-    'Japanese', 
-    'Korean', 
-    'Malay', 
-    'Mamak',
-    'Mediterranean', 
-    'Mexican', 
-    'Nyonya',
-    'Seafood',
-    'Thai', 
-    'Vegetarian',
-    'Vietnamese', 
-    'Western',
-  ];
-
+  /// --------------------------------------------------------------------------
+  /// LIFECYCLE
+  /// --------------------------------------------------------------------------
+  
+  /// Initializes the state and captures the room ID passed via routing arguments.
   @override
   void initState() {
     super.initState();
-    final roomId = ModalRoute.of(context)?.settings.arguments as String?;
-    
+    // Execute after the first frame is rendered to ensure BuildContext is fully available.
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (roomId != null) {
-        context.read<RoomViewModel>().setRoomId(roomId);
+      final String? roomId = ModalRoute.of(context)?.settings.arguments as String?;
+      if (roomId != null && roomId.isNotEmpty) {
+        context.read<RoomViewModel>().init(roomId);
       }
-      context.read<RoomViewModel>().wantResult();
     });
   }
 
-  // removed _showAddDialog since custom input is no longer allowed
+  /// --------------------------------------------------------------------------
+  /// UI HELPERS
+  /// --------------------------------------------------------------------------
+  
+  /// Displays a floating SnackBar at the bottom of the screen for user feedback.
+  /// 
+  /// [message] The text to display.
+  /// [isError] If true, displays a red background indicating failure. Otherwise, green for success.
+  void _showSnackBar(String message, {bool isError = false}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: isError ? Colors.red : Colors.green,
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 3),
+      ),
+    );
+  }
 
-  void _handleBottomNavTap(int index) {
-     if (index == 1) {
-       Navigator.pushReplacementNamed(context, '/home');
-     }
+  /// --------------------------------------------------------------------------
+  /// NAVIGATION GUARD
+  /// --------------------------------------------------------------------------
+  /// Intercepts bottom navigation taps to prevent users from accidentally 
+  /// leaving the room and losing unsubmitted data.
+  /// 
+  /// [index] The index of the tapped bottom navigation bar item.
+  Future<void> _onBottomNavTap(int index) async {
+    final vm = context.read<RoomViewModel>();
+    
+    // 1. Host/Lock Validation
+    bool isAllowed = vm.validateNavigation(index);
+    if (!isAllowed) {
+      if (vm.errorMessage != null) _showSnackBar(vm.errorMessage!, isError: true);
+      return;
+    }
+
+    // 2. Unsubmitted Preferences Guard
+    // Triggers a confirmation dialog if a guest has pending edits.
+    if (!vm.isHost && !vm.isLocked && vm.preferenceCount > 0) {
+      final bool confirmLeave = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+            title: const Text("Discard Selection?", style: TextStyle(fontWeight: FontWeight.bold)),
+            content: const Text(
+              "You have selected preferences but haven't submitted them yet.\n\n"
+              "Leaving now will discard your choices permanently.",
+              style: TextStyle(height: 1.5, color: Colors.black87),
+            ),
+            actions: [
+              TextButton(
+                child: const Text("Stay", style: TextStyle(fontWeight: FontWeight.bold)), 
+                onPressed: () => Navigator.pop(ctx, false) 
+              ),
+              TextButton(
+                style: TextButton.styleFrom(foregroundColor: Colors.red),
+                child: const Text("Leave & Discard"), 
+                onPressed: () => Navigator.pop(ctx, true) 
+              ),
+            ]
+        )
+      ) ?? false;
+      
+      if (!confirmLeave) return; 
+    }
+
+    // 3. Cleanup & Navigate
+    vm.clearLocalPreferences(); 
+
+    if (!mounted) return;
+    
+    if (index == 1) Navigator.pushReplacementNamed(context, '/home');
+    else if (index == 0) Navigator.pushReplacementNamed(context, '/home'); 
+    else if (index == 2) Navigator.pushReplacementNamed(context, '/settings');
+  }
+
+  /// Copies the provided Room ID to the device's clipboard.
+  /// [id] The 6-character room identifier.
+  void _copyToClipboard(String id) {
+    Clipboard.setData(ClipboardData(text: id));
+    _showSnackBar('Room ID copied!', isError: false);
+  }
+
+  /// --------------------------------------------------------------------------
+  /// PREFERENCE ADDITION FLOW
+  /// --------------------------------------------------------------------------
+  /// Triggers the multi-step flow for a guest to add a new food preference.
+  /// 
+  /// Sequence: 
+  /// 1. Limit Check (Max 3).
+  /// 2. Select Category (Restaurant or Cuisine).
+  /// 3. Open Specific Picker Dialog (Google Maps or Chip List).
+  /// 4. Save to ViewModel.
+  /// 
+  /// [vm] The active RoomViewModel instance.
+  void _handleAddButtonPress(RoomViewModel vm) async {
+    if (vm.isHost) return;
+    if (vm.preferenceCount >= RoomViewModel.MAX_PREFS) {
+      _showSnackBar("You can only choose up to 3 preferences!", isError: true);
+      return;
+    }
+
+    String? type = await _showTypeSelectionDialog();
+    if (type == null || !mounted) return;
+
+    if (type == 'Restaurant') {
+      final restaurant = await showDialog<Map<String, dynamic>>(
+        context: context, 
+        builder: (_) => _GoogleMapSearchDialog(vm: vm)
+      );
+      if (restaurant != null && mounted) vm.addRestaurant(restaurant);
+    } else {
+      final cuisine = await _showCuisineSelectionDialog();
+      if (cuisine != null && mounted) vm.addCuisine(cuisine);
+    }
+  }
+
+  /// --------------------------------------------------------------------------
+  /// DIALOG WIDGETS
+  /// --------------------------------------------------------------------------
+  
+  /// Displays a dialog asking the user to pick between "Restaurant" and "Cuisine".
+  /// Returns the selected string, or null if dismissed.
+  Future<String?> _showTypeSelectionDialog() {
+    return showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Text("Add Preference", style: TextStyle(fontWeight: FontWeight.bold)),
+        content: Row(
+          children: [
+            Expanded(child: _buildBigBtn(Icons.store, "Restaurant", Colors.blue, () => Navigator.pop(context, 'Restaurant'))),
+            const SizedBox(width: 15),
+            Expanded(child: _buildBigBtn(Icons.restaurant_menu, "Cuisine", Colors.orange, () => Navigator.pop(context, 'Cuisine'))),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Displays a predefined list of popular cuisines as selectable chips.
+  /// Returns the selected cuisine string, or null if dismissed.
+  Future<String?> _showCuisineSelectionDialog() {
+    final list = [
+      'American', 'Arab', 'Chinese', 'French', 'Indian', 
+      'Indonesian', 'Italian', 'Japanese', 'Korean', 'Malay', 'Mamak',
+      'Mediterranean', 'Mexican', 'Nyonya', 'Thai',
+      'Vietnamese', 'Western'
+    ];
+    return showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: Colors.white,
+        surfaceTintColor: Colors.white,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Text("Choose Cuisine", style: TextStyle(fontWeight: FontWeight.bold)),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: SingleChildScrollView(
+            child: Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: list.map((c) => ActionChip(
+                elevation: 0,
+                backgroundColor: Colors.grey.shade100,
+                side: BorderSide.none,
+                label: Text(c, style: const TextStyle(fontWeight: FontWeight.w500)), 
+                onPressed: () => Navigator.pop(context, c)
+              )).toList(),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Helper widget to build the large square buttons used in the Type Selection Dialog.
+  Widget _buildBigBtn(IconData icon, String label, Color color, VoidCallback onTap) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        height: 100,
+        decoration: BoxDecoration(
+          color: color.withOpacity(0.1), 
+          borderRadius: BorderRadius.circular(16), 
+          border: Border.all(color: color.withOpacity(0.3))
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center, 
+          children: [
+            Icon(icon, color: color), 
+            Text(label, style: TextStyle(color: color, fontWeight: FontWeight.bold))
+          ]
+        ),
+      ),
+    );
+  }
+
+  /// Standardizes the header layout for grouped sections within the room lobby.
+  Widget _buildSectionHeader(String title, {Widget? action}) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Text(title, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.black87)),
+        if (action != null) action,
+      ],
+    );
+  }
+
+  /// --------------------------------------------------------------------------
+  /// MAIN BUILD METHOD
+  /// --------------------------------------------------------------------------
+  @override
+  Widget build(BuildContext context) {
+    final vm = context.watch<RoomViewModel>();
+
+    return Scaffold(
+      backgroundColor: kBackgroundColor,
+      appBar: AppBar(
+        title: const Text("Room", style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
+        backgroundColor: Colors.transparent, 
+        elevation: 0, 
+        automaticallyImplyLeading: false, 
+      ),
+      
+      body: vm.roomId.isEmpty 
+          ? const Center(child: CircularProgressIndicator(color: kPrimaryColor))
+          : StreamBuilder<DocumentSnapshot>(
+              stream: FirebaseFirestore.instance.collection('rooms').doc(vm.roomId).snapshots(),
+              builder: (context, snapshot) {
+                if (snapshot.hasError) return Center(child: Text("Error: ${snapshot.error}"));
+                if (!snapshot.hasData) return const Center(child: CircularProgressIndicator(color: kPrimaryColor));
+
+                final data = snapshot.data!.data() as Map<String, dynamic>?;
+                if (data == null) return const Center(child: Text("Room ended."));
+
+                // Push new stream data to ViewModel
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                   if (mounted) vm.updateFromStream(data); 
+                });
+
+                // STATE A: VERDICT AVAILABLE
+                if (data.containsKey('output')) {
+                  final output = data['output'];
+                  if (output is Map && output.isNotEmpty) {
+                      return _buildResultViewFromMap(Map<String, dynamic>.from(output));
+                  }
+                }
+
+                // STATE B: PROCESSING
+                String status = data['status'] ?? 'waiting';
+                if (status == 'processing') {
+                  return const Center(child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+                    CircularProgressIndicator(color: kPrimaryColor),
+                    SizedBox(height: 20),
+                    Text("AI is deciding...", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: kPrimaryColor))
+                  ]));
+                }
+                
+                // STATE C: LOBBY
+                return _buildBodyContent(vm);
+              },
+            ),
+      
+      bottomNavigationBar: CustomBottomNav(
+        currentIndex: 1, 
+        onTap: _onBottomNavTap,
+      ),
+    );
+  }
+
+  /// --------------------------------------------------------------------------
+  /// STATE A: RESULT VIEW (THE VERDICT)
+  /// --------------------------------------------------------------------------
+  /// Parses the AI output payload and presents it as a polished, standalone screen.
+  /// [result] The raw Map object constructed from the Firestore output field.
+  Widget _buildResultViewFromMap(Map<String, dynamic> result) {
+    final name = result['suggestion_name'] ?? result['suggestion'] ?? "Unknown";
+    final justification = result['justification'] ?? "We found a match!";
+    final price = result['price_range'] ?? ""; 
+
+    return Center(
+      child: SingleChildScrollView(
+        child: Padding(
+          padding: const EdgeInsets.all(24.0),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(Icons.restaurant_rounded, size: 50, color: kPrimaryColor),
+              const SizedBox(height: 10),
+              Text(
+                "The Verdict",
+                style: TextStyle(fontSize: 22, fontWeight: FontWeight.w600, color: Colors.grey.shade800, letterSpacing: 1.2),
+              ),
+              const SizedBox(height: 25),
+              
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(24),
+                  boxShadow: [
+                    BoxShadow(color: Colors.black.withOpacity(0.08), blurRadius: 20, offset: const Offset(0, 8))
+                  ],
+                  border: Border.all(color: Colors.grey.shade100, width: 1),
+                ),
+                child: Column(
+                  children: [
+                    if (price.toString().isNotEmpty) ...[
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                        decoration: BoxDecoration(color: kPrimaryColor.withOpacity(0.1), borderRadius: BorderRadius.circular(20)),
+                        child: Text(
+                          "BUDGET: $price",
+                          style: const TextStyle(color: kPrimaryColor, fontSize: 11, fontWeight: FontWeight.w800, letterSpacing: 0.5),
+                        ),
+                      ),
+                      const SizedBox(height: 20),
+                    ],
+
+                    Text(
+                      name,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(fontSize: 32, fontWeight: FontWeight.bold, color: Colors.black87, height: 1.1),
+                    ),
+                    const SizedBox(height: 25),
+                    const Divider(height: 1, color: Colors.black12),
+                    const SizedBox(height: 25),
+
+                    Column(
+                      children: [
+                        const Text("WHY THIS CHOICE?", style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.grey, letterSpacing: 1.5)),
+                        const SizedBox(height: 8),
+                        Text(
+                          justification,
+                          textAlign: TextAlign.center,
+                          style: TextStyle(color: Colors.grey.shade700, fontSize: 15, height: 1.4, fontStyle: FontStyle.italic),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              
+              const SizedBox(height: 40),
+              
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.home, size: 16, color: Colors.orange.shade700),
+                  const SizedBox(width: 8),
+                  Text("Click 'Home' below to leave", style: TextStyle(color: Colors.orange.shade700, fontWeight: FontWeight.bold, fontSize: 14)),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// --------------------------------------------------------------------------
+  /// STATE C: LOBBY CONTENT
+  /// --------------------------------------------------------------------------
+  
+  /// Builds the main layout for the room while it is waiting for users to submit.
+  Widget _buildBodyContent(RoomViewModel vm) {
+    if (!vm.isHost && vm.isLocked) return _buildWaitingScreen(vm);
+
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        children: [
+          _buildRoomIdentityCard(vm),
+          const SizedBox(height: 20),
+          
+          if (!vm.isHost) ...[
+            _buildBudgetCard(vm),
+            const SizedBox(height: 20),
+          ],
+
+          _buildSubmittedPreferencesHeader(vm),
+          const SizedBox(height: 20),
+          
+          if (!vm.isHost) ...[
+            _buildLivePreferencesSection(context, vm),
+            
+            if (vm.preferenceCount > 0 && !vm.isLocked)
+               Container(
+                 margin: const EdgeInsets.only(top: 15, bottom: 10),
+                 padding: const EdgeInsets.all(12),
+                 decoration: BoxDecoration(color: Colors.orange.shade50, borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.orange.shade200)),
+                 child: Row(
+                   children: [
+                     Icon(Icons.warning_amber_rounded, color: Colors.orange.shade700, size: 24),
+                     const SizedBox(width: 12),
+                     const Expanded(child: Text("Don't forget to submit! Leaving now will discard your choices.", style: TextStyle(color: Colors.brown, fontSize: 12, fontWeight: FontWeight.w600, height: 1.3))),
+                   ],
+                 ),
+               ),
+
+            const SizedBox(height: 10),
+            
+            AuthButton(
+              text: "Submit Preferences",
+              onPressed: () async {
+                await vm.submitPreference();
+                if (mounted) {
+                  if (vm.errorMessage != null) _showSnackBar(vm.errorMessage!, isError: true);
+                  else if (vm.isLocked) _showSnackBar("Preferences Submitted!", isError: false);
+                }
+              },
+            ),
+          ] else ...[
+            const SizedBox(height: 40),
+            
+            AuthButton(
+              text: "Generate Recommendations",
+              onPressed: () async {
+                await vm.generateRecommendation();
+                if (mounted && vm.errorMessage != null) {
+                  _showSnackBar(vm.errorMessage!, isError: true);
+                }
+              },
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  /// Displays the interactive RangeSlider for Guests to set their budget bounds.
+  /// Binds directly to `vm.updateBudget()` to modify ViewModel state.
+  Widget _buildBudgetCard(RoomViewModel vm) {
+    return AuthBox(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _buildSectionHeader("Budget Range"),
+          const SizedBox(height: 5),
+          Center(
+            child: Text(
+              "\$${vm.budgetRange.start.round()}  —  \$${vm.budgetRange.end.round()}",
+              style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w600, color: kPrimaryColor),
+            ),
+          ),
+          const SizedBox(height: 5),
+          RangeSlider(
+            values: vm.budgetRange,
+            min: 0,
+            max: 250, 
+            divisions: 50, 
+            activeColor: kPrimaryColor,
+            inactiveColor: Colors.grey.shade200,
+            labels: RangeLabels("\$${vm.budgetRange.start.round()}", "\$${vm.budgetRange.end.round()}"),
+            // Nullifying onChanged disables the slider if the user is locked out.
+            onChanged: vm.isLocked ? null : (RangeValues values) {
+              vm.updateBudget(values);
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// An intermediate screen shown to Guests after they hit 'Submit'.
+  Widget _buildWaitingScreen(RoomViewModel vm) {
+    return Center(
+      child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+        const CircularProgressIndicator(color: kPrimaryColor),
+        const SizedBox(height: 20),
+        const Text("Waiting for the Host...", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+        const SizedBox(height: 20),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+          decoration: BoxDecoration(color: kPrimaryColor.withOpacity(0.1), borderRadius: BorderRadius.circular(30)),
+          child: Text("Room ID: ${vm.roomId}", style: const TextStyle(color: kPrimaryColor, fontWeight: FontWeight.bold)),
+        )
+      ]),
+    );
+  }
+
+  /// The top card detailing the user's role (Host/Guest) and the shareable Room ID.
+  Widget _buildRoomIdentityCard(RoomViewModel vm) {
+    final bool isHost = vm.isHost;
+    final Color roleColor = isHost ? Colors.amber.shade700 : Colors.blue.shade600;
+
+    return AuthBox(
+      child: Column(
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            decoration: BoxDecoration(color: roleColor.withOpacity(0.1), borderRadius: BorderRadius.circular(20)),
+            child: Text(isHost ? "👑 HOST" : "👤 GUEST", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: roleColor)),
+          ),
+          const SizedBox(height: 15),
+          const Text("Active Room", style: TextStyle(fontSize: 26, fontWeight: FontWeight.w800)),
+          const SizedBox(height: 15),
+          GestureDetector(
+            onTap: () => _copyToClipboard(vm.roomId),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+              decoration: BoxDecoration(color: kPrimaryColor.withOpacity(0.1), borderRadius: BorderRadius.circular(30)),
+              child: Row(
+                mainAxisSize: MainAxisSize.min, 
+                children: [
+                  Text("ID: ${vm.roomId}", style: const TextStyle(fontWeight: FontWeight.bold, color: kPrimaryColor)), 
+                  const SizedBox(width: 10), 
+                  const Icon(Icons.copy, size: 18, color: kPrimaryColor)
+                ]
+              ),
+            ),
+          ),
+          const SizedBox(height: 20),
+          Container(
+            padding: const EdgeInsets.all(12),
+            width: double.infinity,
+            decoration: BoxDecoration(color: Colors.grey.shade50, borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.grey.shade200)),
+            child: Column(
+              children: [
+                Text(
+                  isHost ? "You are the Host.\nWait for guests to submit, then click Generate." : "Submit preferences & budget",
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(fontSize: 13, color: Colors.black54, fontWeight: FontWeight.w500)
+                ),
+                const SizedBox(height: 8),
+                const Text("Click 'Home' below to return safely", style: TextStyle(color: Colors.orange, fontSize: 12, fontWeight: FontWeight.bold)),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Displays the count and identity chips of all participants who have successfully submitted.
+  Widget _buildSubmittedPreferencesHeader(RoomViewModel vm) {
+    return AuthBox(
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+          const Text("Submitted Preferences", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+          Text("${vm.submittedCount}/12", style: const TextStyle(color: kPrimaryColor, fontWeight: FontWeight.bold, fontSize: 18)),
+        ]),
+        const SizedBox(height: 10),
+        if (vm.submittedCount == 0) 
+          const Text("Waiting for submissions...", style: TextStyle(color: Colors.grey))
+        else 
+          Wrap(
+            spacing: 8, 
+            runSpacing: 8,
+            children: List.generate(vm.submittedCount, (i) {
+              final bool isHost = i == 0; 
+              
+              return Chip(
+                avatar: CircleAvatar(
+                  backgroundColor: isHost ? Colors.amber.shade600 : Colors.green, 
+                  child: const Icon(Icons.check, color: Colors.white, size: 12)
+                ), 
+                label: Text(
+                  isHost ? "Host" : "Guest", 
+                  style: TextStyle(
+                    color: isHost ? Colors.amber.shade900 : Colors.black87,
+                    fontWeight: isHost ? FontWeight.bold : FontWeight.normal
+                  )
+                ), 
+                backgroundColor: isHost ? Colors.amber.shade50 : const Color(0xFFE8F5E9),
+                side: BorderSide.none,
+              );
+            }),
+          ),
+      ]),
+    );
+  }
+
+  /// Displays the user's currently selected preferences (Restaurants and Cuisines)
+  /// before they are submitted to the database. Contains logic to differentiate 
+  /// between the two types for custom UI icons.
+  Widget _buildLivePreferencesSection(BuildContext context, RoomViewModel vm) {
+    return AuthBox(
+      child: Column(children: [
+        Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+          Text("Live Preferences (${vm.preferenceCount}/3)", style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+          if (!vm.isLocked) IconButton(icon: const Icon(Icons.add_circle, color: kPrimaryColor, size: 30), onPressed: () => _handleAddButtonPress(vm)),
+        ]),
+        const Divider(),
+        if (vm.allPreferences.isEmpty) const Text("No choices added.", style: TextStyle(color: Colors.grey))
+        else ListView.builder(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(), 
+          itemCount: vm.allPreferences.length,
+          itemBuilder: (ctx, i) {
+            final prefName = vm.allPreferences[i];
+            
+            // Evaluates if the specific string maps to a stored Restaurant object.
+            final isRestaurant = vm.selectedRestaurants.any((r) => r['name'] == prefName);
+
+            return Container(
+              margin: const EdgeInsets.only(bottom: 10),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.grey.shade200),
+                boxShadow: [BoxShadow(color: Colors.grey.shade100, blurRadius: 4, offset: const Offset(0, 2))],
+              ),
+              child: ListTile(
+                leading: Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(color: isRestaurant ? Colors.blue.shade50 : Colors.orange.shade50, shape: BoxShape.circle),
+                  child: Icon(isRestaurant ? Icons.store_rounded : Icons.restaurant_menu_rounded, color: isRestaurant ? Colors.blue : kPrimaryColor, size: 20),
+                ),
+                title: Text(prefName, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+                trailing: vm.isLocked ? null : IconButton(icon: const Icon(Icons.close, color: Colors.grey, size: 20), onPressed: () => vm.removePreferenceByName(prefName)),
+              ),
+            );
+          },
+        )
+      ]),
+    );
+  }
+}
+
+/// ==============================================================================
+/// GOOGLE MAPS SEARCH DIALOG
+/// ==============================================================================
+/// A stateful dialog containing an interactive Google Map and a text field.
+/// Allows users to search for specific physical restaurants via the Places API,
+/// preview their location on the map, and confirm their selection.
+class _GoogleMapSearchDialog extends StatefulWidget {
+  final RoomViewModel vm;
+  const _GoogleMapSearchDialog({required this.vm});
+  @override
+  State<_GoogleMapSearchDialog> createState() => _GoogleMapSearchDialogState();
+}
+
+class _GoogleMapSearchDialogState extends State<_GoogleMapSearchDialog> {
+  final TextEditingController _searchController = TextEditingController();
+  GoogleMapController? _mapController;
+  Set<Marker> _markers = {};
+  Map<String, dynamic>? _selectedPlace;
+  bool _isSearching = false;
+
+  /// Executes the text query against the Coordinator's map service.
+  /// Updates the map with interactive markers if results are found.
+  void _onSearch() async {
+    FocusScope.of(context).unfocus(); 
+    final query = _searchController.text.trim();
+    if (query.isEmpty) return;
+    
+    setState(() => _isSearching = true);
+    
+    final results = await widget.vm.searchPlaces(query);
+    if (!mounted) return;
+    
+    if (results.isEmpty) { 
+      setState(() => _isSearching = false); 
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("No results found."))); 
+      return; 
+    }
+    
+    setState(() {
+      _isSearching = false;
+      _selectedPlace = results.first;
+      
+      _markers = results.map((place) => Marker(
+        markerId: MarkerId(place['placeId']),
+        position: LatLng(place['lat'], place['lng']),
+        onTap: () => setState(() => _selectedPlace = place),
+      )).toSet();
+    });
+    
+    _mapController?.animateCamera(CameraUpdate.newLatLngZoom(LatLng(_selectedPlace!['lat'], _selectedPlace!['lng']), 15.0));
   }
 
   @override
   Widget build(BuildContext context) {
-    final vm = context.watch<RoomViewModel>();
-    
-    // --- DETERMINE CURRENT SCREEN STATE ---
-    bool showResult = vm.recommendation != null;
-    bool isParticipantWaiting = !vm.isHost && vm.isLocked; 
-    bool showInputScreen = !showResult && !isParticipantWaiting;
-
-    // Helper boolean: Are inputs enabled?
-    // Disabled if: Submission is Full (Spectator), User is Locked (Done), or User is Host (View Only)
-    bool inputsDisabled = vm.isSubmissionFull || vm.isLocked || vm.isHost;
-
-    return Scaffold(
-      backgroundColor: kBackgroundColor,
-      
-      appBar: AppBar(
-        title: const Text("Lobby"), 
-        automaticallyImplyLeading: false, 
-        actions: [
-          Container(
-            margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-            decoration: BoxDecoration(
-              color: kPrimaryColor.withOpacity(0.1),
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(color: kPrimaryColor.withOpacity(0.5)),
-            ),
-            child: Row(
-              children: [
-                Text(
-                  "ID: ${vm.roomId}", 
-                  style: const TextStyle(fontWeight: FontWeight.bold, color: kPrimaryColor)
-                ),
-                const SizedBox(width: 5),
-                const Icon(Icons.copy, size: 14, color: kPrimaryColor),
-              ],
-            ),
-          )
-        ],
-      ),
-      
-      body: SingleChildScrollView(
-        child: Column(
+    return Dialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      child: SizedBox(
+        height: 600, 
+        child: Stack(
           children: [
+            // 1. The Interactive Map Layer
+            ClipRRect(
+              borderRadius: BorderRadius.circular(20), 
+              child: GoogleMap(
+                initialCameraPosition: const CameraPosition(target: LatLng(3.1390, 101.6869), zoom: 12), 
+                onMapCreated: (c) => _mapController = c, 
+                markers: _markers
+              )
+            ),
             
-            // ====================================================
-            // STATE 1: RESULT SCREEN
-            // ====================================================
-            if (showResult) ...[
-               Container(
-                 margin: const EdgeInsets.all(20),
-                 width: double.infinity, padding: const EdgeInsets.all(20),
-                 decoration: BoxDecoration(
-                   color: Colors.white, borderRadius: BorderRadius.circular(20),
-                   border: Border.all(color: Colors.green, width: 2),
-                   boxShadow: [BoxShadow(color: Colors.green.withOpacity(0.2), blurRadius: 10)],
-                 ),
-                 child: Column(
-                   children: [
-                     const Icon(Icons.emoji_events, size: 60, color: Colors.green),
-                     const SizedBox(height: 10),
-                     const Text("It's Decided!", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 20, color: Colors.green)),
-                     const SizedBox(height: 10),
-                     Text(
-                       vm.recommendation?['name'] ?? "Unknown", 
-                       style: const TextStyle(fontSize: 28, fontWeight: FontWeight.bold), 
-                       textAlign: TextAlign.center
-                     ),
-                     Text(
-                       vm.recommendation?['type'] ?? "Restaurant", 
-                       style: TextStyle(fontSize: 16, color: Colors.green.shade700)
-                     ),
-                   ],
-                 ),
-               ),
-               Padding(
-                 padding: const EdgeInsets.symmetric(horizontal: 20),
-                 child: AuthButton(
-                   text: "Leave Room",
-                   onPressed: () async {
-                     await vm.leaveRoom();
-                     if (context.mounted) Navigator.pushReplacementNamed(context, '/home');
-                   },
-                 ),
-               )
-            ]
-
-            // ====================================================
-            // STATE 2: WAITING SCREEN
-            // ====================================================
-            else if (isParticipantWaiting) ...[
-               const SizedBox(height: 60),
-               Container(
-                 padding: const EdgeInsets.all(30),
-                 decoration: BoxDecoration(color: Colors.white, shape: BoxShape.circle, boxShadow: [BoxShadow(color: Colors.grey.shade200, blurRadius: 10)]),
-                 child: const Icon(Icons.hourglass_top_rounded, size: 60, color: kPrimaryColor),
-               ),
-               const SizedBox(height: 30),
-               const Text("Preferences Submitted!", style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: kPrimaryColor)),
-               const SizedBox(height: 15),
-               const Text("Please wait for the host to\ngenerate a restaurant recommendation.", textAlign: TextAlign.center, style: TextStyle(color: Colors.grey, fontSize: 16)),
-               const SizedBox(height: 60),
-               const CircularProgressIndicator(color: kPrimaryColor),
-            ]
-
-            // ====================================================
-            // STATE 3: INPUT / VOTING SCREEN
-            // ====================================================
-            else if (showInputScreen) ...[
-               
-               // --- MAP SECTION ---
-               SizedBox(
-                 height: 250,
-                 width: double.infinity,
-                 child: Stack(
-                   children: [
-                     GoogleMap(
-                       mapType: MapType.normal,
-                       initialCameraPosition: _kDefaultLocation,
-                       myLocationEnabled: true,
-                       zoomControlsEnabled: false, 
-                       markers: _markers,
-                       onMapCreated: (GoogleMapController controller) {
-                         _mapController = controller;
-                       },
-                     ),
-                     // Hint Overlay
-                     Positioned(
-                       bottom: 10, right: 10,
-                       child: Container(
-                         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                         decoration: BoxDecoration(
-                           color: Colors.white.withOpacity(0.9), 
-                           borderRadius: BorderRadius.circular(20),
-                           boxShadow: const [BoxShadow(color: Colors.black12, blurRadius: 4)]
-                         ),
-                         child: const Text(
-                           "Tap a restaurant to add it!", 
-                           style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.black87)
-                         ),
-                       ),
-                     ),
-                   ],
-                 ),
-               ),
-
-               Padding(
-                 padding: const EdgeInsets.all(20),
-                 child: Column(
-                   children: [
-                     // --- WARNINGS ---
-                     if (vm.isSubmissionFull)
-                       Container(
-                         width: double.infinity,
-                         margin: const EdgeInsets.only(bottom: 20),
-                         padding: const EdgeInsets.all(12),
-                         decoration: BoxDecoration(color: Colors.orange.shade50, borderRadius: BorderRadius.circular(10), border: Border.all(color: Colors.orange.shade200)),
-                         child: Row(
-                           children: const [
-                             Icon(Icons.info_outline, color: Colors.orange),
-                             SizedBox(width: 10),
-                             Expanded(child: Text("Voting is full (12 votes max). You are spectating.", style: TextStyle(color: Colors.orange, fontSize: 13))),
-                           ],
-                         ),
-                       ),
-
-                     // --- BUDGET SLIDER ---
-                     AuthBox(
-                       child: Column(
-                         children: [
-                           const Text("Budget Range", style: TextStyle(fontWeight: FontWeight.bold)),
-                           RangeSlider(
-                             values: vm.budgetRange,
-                             min: 0, max: 100, divisions: 20,
-                             activeColor: kPrimaryColor,
-                             labels: RangeLabels("\$${vm.budgetRange.start.round()}", "\$${vm.budgetRange.end.round()}"),
-                             // Disable if Spectating, Locked, or Host
-                             onChanged: inputsDisabled ? null : (v) => vm.setBudget(v),
-                           ),
-                         ],
-                       ),
-                     ),
-                     const SizedBox(height: 20),
-
-                     // --- CUISINE CHIPS ---
-                     AuthBox(
-                       child: Column(
-                         crossAxisAlignment: CrossAxisAlignment.start,
-                         children: [
-                           Row(
-                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                             children: const [
-                               Text("Quick Select Cuisines", style: TextStyle(fontWeight: FontWeight.bold)),
-                               // Custom Add Button Removed as per requirement
-                             ],
-                           ),
-                           const SizedBox(height: 10),
-                           
-                           Wrap(
-                             spacing: 8.0, 
-                             runSpacing: 4.0, 
-                             children: _cuisineOptions.map((cuisine) {
-                               final isSelected = vm.preferences.contains(cuisine);
-                               return FilterChip(
-                                 label: Text(cuisine),
-                                 selected: isSelected,
-                                 selectedColor: kPrimaryColor.withOpacity(0.2),
-                                 checkmarkColor: kPrimaryColor,
-                                 labelStyle: TextStyle(
-                                   color: isSelected ? kPrimaryColor : Colors.black87,
-                                   fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-                                 ),
-                                 // Disable if Spectating, Locked, or Host
-                                 onSelected: inputsDisabled ? null : (bool selected) {
-                                   if (selected) {
-                                     vm.addPreference(cuisine);
-                                   } else {
-                                     vm.removePreference(cuisine);
-                                   }
-                                 },
-                               );
-                             }).toList(),
-                           ),
-                         ],
-                       ),
-                     ),
-                     const SizedBox(height: 20),
-
-                     // --- SELECTED LIST VIEW ---
-                     if (vm.preferences.isNotEmpty)
-                       AuthBox(
-                         child: Column(
-                           crossAxisAlignment: CrossAxisAlignment.start,
-                           children: [
-                             const Text("Your Selection", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.grey)),
-                             const SizedBox(height: 5),
-                             ...vm.preferences.map((pref) {
-                               final isKnownCuisine = _cuisineOptions.contains(pref);
-                               return ListTile(
-                                 dense: true,
-                                 contentPadding: EdgeInsets.zero,
-                                 leading: Icon(
-                                   isKnownCuisine ? Icons.restaurant_menu : Icons.place, 
-                                   color: isKnownCuisine ? kPrimaryColor : Colors.blue
-                                 ),
-                                 title: Text(pref),
-                                 // Disable delete if Spectating, Locked, or Host
-                                 trailing: inputsDisabled ? null : IconButton(
-                                   icon: const Icon(Icons.close, color: Colors.grey, size: 20),
-                                   onPressed: () => vm.removePreference(pref)
-                                 ),
-                               );
-                             }),
-                           ],
-                         ),
-                       ),
-
-                     const SizedBox(height: 30),
-
-                     // --- ACTION BUTTONS ---
-                     if (vm.isHost)
-                       // HOST VIEW
-                       Column(
-                         children: [
-                           SizedBox(
-                             width: double.infinity, height: 60,
-                             child: ElevatedButton(
-                               style: ElevatedButton.styleFrom(
-                                 backgroundColor: vm.allParticipantsReady ? Colors.green : Colors.grey,
-                                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                               ),
-                               onPressed: vm.allParticipantsReady 
-                                 ? () => vm.generateRecommendation() 
-                                 : null, 
-                               child: Text(
-                                 vm.allParticipantsReady ? "Generate Recommendation" : "Waiting for Participants...",
-                                 style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
-                               ),
-                             ),
-                           ),
-                           const SizedBox(height: 10),
-                           Text("${vm.participants.length} joined", style: const TextStyle(color: Colors.grey)),
-                         ],
-                       )
-                     else
-                       // GUEST VIEW
-                       SizedBox(
-                         width: double.infinity, height: 60,
-                         child: ElevatedButton(
-                           style: ElevatedButton.styleFrom(
-                             // Disable if Voting is Full OR User already submitted
-                             backgroundColor: (vm.isSubmissionFull || vm.isLocked) ? Colors.grey : kPrimaryColor,
-                             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                           ),
-                           // Disable if Voting is Full OR User already submitted
-                           onPressed: (vm.isSubmissionFull || vm.isLocked) ? null : () => vm.lockSelection(),
-                           child: Text(
-                             vm.isSubmissionFull ? "Voting Full (Spectator)" : "Submit Preferences",
-                             style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
-                           ),
-                         ),
-                       ),
-                   ],
-                 ),
-               ),
-            ],
+            // 2. The Floating Search Input Overlay
+            Positioned(
+              top: 20, left: 15, right: 15,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Container(
+                    decoration: BoxDecoration(
+                      color: Colors.white, 
+                      borderRadius: BorderRadius.circular(12),
+                      boxShadow: [const BoxShadow(color: Colors.black12, blurRadius: 8, offset: Offset(0, 4))]
+                    ),
+                    child: TextField(
+                      controller: _searchController,
+                      decoration: const InputDecoration(
+                        hintText: "Enter restaurant name...",
+                        border: InputBorder.none,
+                        contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                        prefixIcon: Icon(Icons.search, color: Colors.grey),
+                      ),
+                      textInputAction: TextInputAction.done, 
+                    ),
+                  ),
+                  
+                  const SizedBox(height: 10),
+                  
+                  ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: kPrimaryColor,
+                      foregroundColor: Colors.white,
+                      elevation: 4,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      padding: const EdgeInsets.symmetric(vertical: 14)
+                    ),
+                    onPressed: _isSearching ? null : _onSearch,
+                    child: _isSearching 
+                        ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2)) 
+                        : const Text("Search Restaurant", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                  ),
+                ],
+              )
+            ),
             
-            const SizedBox(height: 40),
+            // 3. The Selection Confirmation Overlay 
+            if (_selectedPlace != null) 
+              Positioned(
+                bottom: 25, left: 25, right: 25, 
+                child: AuthButton(
+                  text: "Select: ${_selectedPlace!['name']}", 
+                  onPressed: () => Navigator.pop(context, _selectedPlace)
+                )
+              )
           ],
         ),
-      ),
-      
-      bottomNavigationBar: BottomNavigationBar(
-        currentIndex: 1, 
-        onTap: _handleBottomNavTap, 
-        selectedItemColor: kPrimaryColor, 
-        unselectedItemColor: Colors.grey,
-        items: const [
-          BottomNavigationBarItem(icon: Icon(Icons.lunch_dining), label: 'New Room'),
-          BottomNavigationBarItem(icon: Icon(Icons.home), label: 'Home'),
-          BottomNavigationBarItem(icon: Icon(Icons.person), label: 'Profile'),
-        ],
       ),
     );
   }

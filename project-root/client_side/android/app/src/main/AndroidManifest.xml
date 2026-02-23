@@ -1,5 +1,6 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <application
+        android:usesCleartextTraffic="true"
         android:label="what2eat"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
@@ -18,6 +19,7 @@
                  to determine the Window background behind the Flutter UI. -->
             <meta-data
               android:name="io.flutter.embedding.android.NormalTheme"
+              android:value="AIzaSyBwyjnVcW04aJoAzGxJbb0T9eNF85FnCNk"
               android:resource="@style/NormalTheme"
               />
             <intent-filter>
