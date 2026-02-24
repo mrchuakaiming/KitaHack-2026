@@ -631,12 +631,12 @@ class Coordinator {
     // 3) Take action in RTDB only when needed.
     if (isHost) {
       // Host:
-      // - First join: create record with submitted=true (no disconnected_at)
+      // - First join: create record with submitted=false (no disconnected_at)
       if (!hasRecord) {
         await _rtdb.setParticipantSubmitted(
           roomId: id,
           uid: uid,
-          submitted: true,
+          submitted: false,
         ); // no 'disconnected_at' on creation
       } else if (hasDisconnectedAt) {
         // Returning host: clear disconnected_at if it exists

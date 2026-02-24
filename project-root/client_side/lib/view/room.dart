@@ -9,15 +9,11 @@ import 'common_widgets.dart';
 import 'bottom_nav.dart'; 
 
 /// ==============================================================================
-/// ROOM PAGE
+/// ROOM PAGE (View)
 /// ==============================================================================
-/// The central hub for the collaborative group dining session.
-/// 
-/// This widget acts as the primary view for both the "Host" and the "Guests".
-/// It listens to a live Firestore stream to update its UI across three main states:
-/// 1. **Lobby State**: Users are adding and submitting preferences.
-/// 2. **Processing State**: The AI is currently generating a recommendation.
-/// 3. **Verdict State**: The final AI recommendation is displayed to all users.
+/// This file acts as the primary UI layer for an active room.
+/// It observes the `RoomViewModel` via Provider to reactively rebuild the UI
+/// based on the state of the room (e.g., waiting for users, submitting, or showing the AI result).
 class RoomPage extends StatefulWidget {
   const RoomPage({super.key});
 
@@ -27,15 +23,11 @@ class RoomPage extends StatefulWidget {
 
 class _RoomPageState extends State<RoomPage> {
   
-  /// --------------------------------------------------------------------------
-  /// LIFECYCLE
-  /// --------------------------------------------------------------------------
-  
-  /// Initializes the state and captures the room ID passed via routing arguments.
   @override
   void initState() {
     super.initState();
-    // Execute after the first frame is rendered to ensure BuildContext is fully available.
+    // Use addPostFrameCallback to safely access the context after the first build.
+    // This allows us to grab the Room ID passed from the previous route and initialize the ViewModel.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final String? roomId = ModalRoute.of(context)?.settings.arguments as String?;
       if (roomId != null && roomId.isNotEmpty) {
@@ -44,14 +36,7 @@ class _RoomPageState extends State<RoomPage> {
     });
   }
 
-  /// --------------------------------------------------------------------------
-  /// UI HELPERS
-  /// --------------------------------------------------------------------------
-  
-  /// Displays a floating SnackBar at the bottom of the screen for user feedback.
-  /// 
-  /// [message] The text to display.
-  /// [isError] If true, displays a red background indicating failure. Otherwise, green for success.
+  /// Displays a floating UI banner at the bottom of the screen for brief user feedback.
   void _showSnackBar(String message, {bool isError = false}) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).hideCurrentSnackBar();
@@ -65,26 +50,22 @@ class _RoomPageState extends State<RoomPage> {
     );
   }
 
-  /// --------------------------------------------------------------------------
-  /// NAVIGATION GUARD
-  /// --------------------------------------------------------------------------
-  /// Intercepts bottom navigation taps to prevent users from accidentally 
-  /// leaving the room and losing unsubmitted data.
-  /// 
-  /// [index] The index of the tapped bottom navigation bar item.
+  /// Handles taps on the custom bottom navigation bar.
+  /// It intercepts the navigation request, validates it through the ViewModel,
+  /// and displays a warning dialog if the user is about to lose unsubmitted data.
   Future<void> _onBottomNavTap(int index) async {
     final vm = context.read<RoomViewModel>();
     
-    // 1. Host/Lock Validation
+    // 1. Check if the ViewModel permits navigation at this specific state.
     bool isAllowed = vm.validateNavigation(index);
     if (!isAllowed) {
       if (vm.errorMessage != null) _showSnackBar(vm.errorMessage!, isError: true);
       return;
     }
 
-    // 2. Unsubmitted Preferences Guard
-    // Triggers a confirmation dialog if a guest has pending edits.
-    if (!vm.isHost && !vm.isLocked && vm.preferenceCount > 0) {
+    // 2. Safeguard: Prevent users from accidentally abandoning unsaved preferences.
+    // If they have picked items but haven't submitted, force them to confirm.
+    if (!vm.hasSubmitted && vm.preferenceCount > 0) {
       final bool confirmLeave = await showDialog<bool>(
         context: context,
         builder: (ctx) => AlertDialog(
@@ -98,59 +79,51 @@ class _RoomPageState extends State<RoomPage> {
             actions: [
               TextButton(
                 child: const Text("Stay", style: TextStyle(fontWeight: FontWeight.bold)), 
-                onPressed: () => Navigator.pop(ctx, false) 
+                onPressed: () => Navigator.pop(ctx, false) // Cancel leave
               ),
               TextButton(
                 style: TextButton.styleFrom(foregroundColor: Colors.red),
                 child: const Text("Leave & Discard"), 
-                onPressed: () => Navigator.pop(ctx, true) 
+                onPressed: () => Navigator.pop(ctx, true) // Confirm leave
               ),
             ]
         )
       ) ?? false;
       
-      if (!confirmLeave) return; 
+      if (!confirmLeave) return; // User chose to stay
     }
 
-    // 3. Cleanup & Navigate
+    // Clear temporary UI state before officially leaving the room
     vm.clearLocalPreferences(); 
 
     if (!mounted) return;
     
+    // Execute routing
     if (index == 1) Navigator.pushReplacementNamed(context, '/home');
     else if (index == 0) Navigator.pushReplacementNamed(context, '/home'); 
     else if (index == 2) Navigator.pushReplacementNamed(context, '/settings');
   }
 
-  /// Copies the provided Room ID to the device's clipboard.
-  /// [id] The 6-character room identifier.
+  /// Copies the current Room ID to the device clipboard for easy sharing.
   void _copyToClipboard(String id) {
     Clipboard.setData(ClipboardData(text: id));
     _showSnackBar('Room ID copied!', isError: false);
   }
 
-  /// --------------------------------------------------------------------------
-  /// PREFERENCE ADDITION FLOW
-  /// --------------------------------------------------------------------------
-  /// Triggers the multi-step flow for a guest to add a new food preference.
-  /// 
-  /// Sequence: 
-  /// 1. Limit Check (Max 3).
-  /// 2. Select Category (Restaurant or Cuisine).
-  /// 3. Open Specific Picker Dialog (Google Maps or Chip List).
-  /// 4. Save to ViewModel.
-  /// 
-  /// [vm] The active RoomViewModel instance.
+  /// Triggered when the user clicks the '+' button to add a new preference.
+  /// Enforces the maximum preference limit and opens the respective dialogs.
   void _handleAddButtonPress(RoomViewModel vm) async {
-    if (vm.isHost) return;
+    if (vm.isLocked) return;
     if (vm.preferenceCount >= RoomViewModel.MAX_PREFS) {
       _showSnackBar("You can only choose up to 3 preferences!", isError: true);
       return;
     }
 
+    // Step 1: Ask the user if they want to add a Restaurant or a Cuisine
     String? type = await _showTypeSelectionDialog();
     if (type == null || !mounted) return;
 
+    // Step 2: Open the appropriate selection UI
     if (type == 'Restaurant') {
       final restaurant = await showDialog<Map<String, dynamic>>(
         context: context, 
@@ -163,12 +136,7 @@ class _RoomPageState extends State<RoomPage> {
     }
   }
 
-  /// --------------------------------------------------------------------------
-  /// DIALOG WIDGETS
-  /// --------------------------------------------------------------------------
-  
-  /// Displays a dialog asking the user to pick between "Restaurant" and "Cuisine".
-  /// Returns the selected string, or null if dismissed.
+  /// Displays a modal prompting the user to select the category of their preference.
   Future<String?> _showTypeSelectionDialog() {
     return showDialog<String>(
       context: context,
@@ -186,8 +154,7 @@ class _RoomPageState extends State<RoomPage> {
     );
   }
 
-  /// Displays a predefined list of popular cuisines as selectable chips.
-  /// Returns the selected cuisine string, or null if dismissed.
+  /// Displays a modal containing predefined Cuisine options.
   Future<String?> _showCuisineSelectionDialog() {
     final list = [
       'American', 'Arab', 'Chinese', 'French', 'Indian', 
@@ -208,6 +175,7 @@ class _RoomPageState extends State<RoomPage> {
             child: Wrap(
               spacing: 8,
               runSpacing: 8,
+              // Map standard list to clickable chips
               children: list.map((c) => ActionChip(
                 elevation: 0,
                 backgroundColor: Colors.grey.shade100,
@@ -222,7 +190,7 @@ class _RoomPageState extends State<RoomPage> {
     );
   }
 
-  /// Helper widget to build the large square buttons used in the Type Selection Dialog.
+  /// Helper widget to generate large, tappable category buttons (Restaurant/Cuisine).
   Widget _buildBigBtn(IconData icon, String label, Color color, VoidCallback onTap) {
     return GestureDetector(
       onTap: onTap,
@@ -244,7 +212,7 @@ class _RoomPageState extends State<RoomPage> {
     );
   }
 
-  /// Standardizes the header layout for grouped sections within the room lobby.
+  /// Helper widget to render standard section titles across the app.
   Widget _buildSectionHeader(String title, {Widget? action}) {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -255,11 +223,9 @@ class _RoomPageState extends State<RoomPage> {
     );
   }
 
-  /// --------------------------------------------------------------------------
-  /// MAIN BUILD METHOD
-  /// --------------------------------------------------------------------------
   @override
   Widget build(BuildContext context) {
+    // Watch allows the UI to automatically rebuild whenever notifyListeners() is called in RoomViewModel.
     final vm = context.watch<RoomViewModel>();
 
     return Scaffold(
@@ -268,11 +234,12 @@ class _RoomPageState extends State<RoomPage> {
         title: const Text("Room", style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
         backgroundColor: Colors.transparent, 
         elevation: 0, 
-        automaticallyImplyLeading: false, 
+        automaticallyImplyLeading: false, // Prevents the default back button to enforce custom navigation logic
       ),
       
       body: vm.roomId.isEmpty 
           ? const Center(child: CircularProgressIndicator(color: kPrimaryColor))
+          // StreamBuilder listens directly to the Firestore Room document for global status changes (e.g. processing, finished)
           : StreamBuilder<DocumentSnapshot>(
               stream: FirebaseFirestore.instance.collection('rooms').doc(vm.roomId).snapshots(),
               builder: (context, snapshot) {
@@ -282,12 +249,12 @@ class _RoomPageState extends State<RoomPage> {
                 final data = snapshot.data!.data() as Map<String, dynamic>?;
                 if (data == null) return const Center(child: Text("Room ended."));
 
-                // Push new stream data to ViewModel
+                // Safely update the ViewModel if new data arrives (e.g. the AI payload is written to the DB)
                 WidgetsBinding.instance.addPostFrameCallback((_) {
                    if (mounted) vm.updateFromStream(data); 
                 });
 
-                // STATE A: VERDICT AVAILABLE
+                // SCENARIO A: AI Generation Complete. Display the result screen.
                 if (data.containsKey('output')) {
                   final output = data['output'];
                   if (output is Map && output.isNotEmpty) {
@@ -295,7 +262,7 @@ class _RoomPageState extends State<RoomPage> {
                   }
                 }
 
-                // STATE B: PROCESSING
+                // SCENARIO B: Host clicked Generate. Show the global processing screen.
                 String status = data['status'] ?? 'waiting';
                 if (status == 'processing') {
                   return const Center(child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
@@ -305,7 +272,7 @@ class _RoomPageState extends State<RoomPage> {
                   ]));
                 }
                 
-                // STATE C: LOBBY
+                // SCENARIO C: Default Room View (Adding preferences, waiting)
                 return _buildBodyContent(vm);
               },
             ),
@@ -317,11 +284,7 @@ class _RoomPageState extends State<RoomPage> {
     );
   }
 
-  /// --------------------------------------------------------------------------
-  /// STATE A: RESULT VIEW (THE VERDICT)
-  /// --------------------------------------------------------------------------
-  /// Parses the AI output payload and presents it as a polished, standalone screen.
-  /// [result] The raw Map object constructed from the Firestore output field.
+  /// Renders the final victory screen showing Gemini's restaurant choice.
   Widget _buildResultViewFromMap(Map<String, dynamic> result) {
     final name = result['suggestion_name'] ?? result['suggestion'] ?? "Unknown";
     final justification = result['justification'] ?? "We found a match!";
@@ -408,12 +371,10 @@ class _RoomPageState extends State<RoomPage> {
     );
   }
 
-  /// --------------------------------------------------------------------------
-  /// STATE C: LOBBY CONTENT
-  /// --------------------------------------------------------------------------
-  
-  /// Builds the main layout for the room while it is waiting for users to submit.
+  /// Orchestrates the core interactive UI for the room.
   Widget _buildBodyContent(RoomViewModel vm) {
+    // Only Guests who have submitted get sent to the passive waiting screen.
+    // The Host bypasses this entirely to keep their UI visible so they can click 'Generate'.
     if (!vm.isHost && vm.isLocked) return _buildWaitingScreen(vm);
 
     return SingleChildScrollView(
@@ -423,46 +384,49 @@ class _RoomPageState extends State<RoomPage> {
           _buildRoomIdentityCard(vm),
           const SizedBox(height: 20),
           
-          if (!vm.isHost) ...[
-            _buildBudgetCard(vm),
-            const SizedBox(height: 20),
-          ],
+          _buildBudgetCard(vm),
+          const SizedBox(height: 20),
 
           _buildSubmittedPreferencesHeader(vm),
           const SizedBox(height: 20),
           
-          if (!vm.isHost) ...[
-            _buildLivePreferencesSection(context, vm),
-            
-            if (vm.preferenceCount > 0 && !vm.isLocked)
-               Container(
-                 margin: const EdgeInsets.only(top: 15, bottom: 10),
-                 padding: const EdgeInsets.all(12),
-                 decoration: BoxDecoration(color: Colors.orange.shade50, borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.orange.shade200)),
-                 child: Row(
-                   children: [
-                     Icon(Icons.warning_amber_rounded, color: Colors.orange.shade700, size: 24),
-                     const SizedBox(width: 12),
-                     const Expanded(child: Text("Don't forget to submit! Leaving now will discard your choices.", style: TextStyle(color: Colors.brown, fontSize: 12, fontWeight: FontWeight.w600, height: 1.3))),
-                   ],
-                 ),
+          _buildLivePreferencesSection(context, vm),
+          
+          // WARNING BANNER: Reminds users their local state is not yet saved to the cloud.
+          // Disappears once the user (Host or Guest) successfully submits.
+          if (vm.preferenceCount > 0 && !vm.hasSubmitted)
+             Container(
+               margin: const EdgeInsets.only(top: 15, bottom: 10),
+               padding: const EdgeInsets.all(12),
+               decoration: BoxDecoration(color: Colors.orange.shade50, borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.orange.shade200)),
+               child: Row(
+                 children: [
+                   Icon(Icons.warning_amber_rounded, color: Colors.orange.shade700, size: 24),
+                   const SizedBox(width: 12),
+                   const Expanded(child: Text("Don't forget to submit! Leaving now will discard your choices.", style: TextStyle(color: Colors.brown, fontSize: 12, fontWeight: FontWeight.w600, height: 1.3))),
+                 ],
                ),
+             ),
 
-            const SizedBox(height: 10),
-            
+          const SizedBox(height: 10),
+          
+          // The "Submit Preferences" button is visible to BOTH Host and Guest until they finalize.
+          if (!vm.hasSubmitted) ...[
             AuthButton(
               text: "Submit Preferences",
               onPressed: () async {
                 await vm.submitPreference();
                 if (mounted) {
                   if (vm.errorMessage != null) _showSnackBar(vm.errorMessage!, isError: true);
-                  else if (vm.isLocked) _showSnackBar("Preferences Submitted!", isError: false);
+                  else _showSnackBar("Preferences Submitted!", isError: false);
                 }
               },
             ),
-          ] else ...[
-            const SizedBox(height: 40),
-            
+            const SizedBox(height: 20), 
+          ],
+          
+          // The "Generate Recommendations" button is uniquely reserved for the Host.
+          if (vm.isHost) ...[
             AuthButton(
               text: "Generate Recommendations",
               onPressed: () async {
@@ -478,8 +442,7 @@ class _RoomPageState extends State<RoomPage> {
     );
   }
 
-  /// Displays the interactive RangeSlider for Guests to set their budget bounds.
-  /// Binds directly to `vm.updateBudget()` to modify ViewModel state.
+  /// Renders the interactive RangeSlider for setting a budget limit.
   Widget _buildBudgetCard(RoomViewModel vm) {
     return AuthBox(
       child: Column(
@@ -502,7 +465,6 @@ class _RoomPageState extends State<RoomPage> {
             activeColor: kPrimaryColor,
             inactiveColor: Colors.grey.shade200,
             labels: RangeLabels("\$${vm.budgetRange.start.round()}", "\$${vm.budgetRange.end.round()}"),
-            // Nullifying onChanged disables the slider if the user is locked out.
             onChanged: vm.isLocked ? null : (RangeValues values) {
               vm.updateBudget(values);
             },
@@ -512,7 +474,7 @@ class _RoomPageState extends State<RoomPage> {
     );
   }
 
-  /// An intermediate screen shown to Guests after they hit 'Submit'.
+  /// Renders a passive waiting screen for Guests who have already submitted their votes.
   Widget _buildWaitingScreen(RoomViewModel vm) {
     return Center(
       child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
@@ -529,7 +491,7 @@ class _RoomPageState extends State<RoomPage> {
     );
   }
 
-  /// The top card detailing the user's role (Host/Guest) and the shareable Room ID.
+  /// Renders the top card showing the user's role and the copyable room ID.
   Widget _buildRoomIdentityCard(RoomViewModel vm) {
     final bool isHost = vm.isHost;
     final Color roleColor = isHost ? Colors.amber.shade700 : Colors.blue.shade600;
@@ -568,7 +530,9 @@ class _RoomPageState extends State<RoomPage> {
             child: Column(
               children: [
                 Text(
-                  isHost ? "You are the Host.\nWait for guests to submit, then click Generate." : "Submit preferences & budget",
+                  isHost 
+                      ? "You are the Host.\nWait for guests to submit, then click Generate." 
+                      : "Submit preferences & budget",
                   textAlign: TextAlign.center,
                   style: const TextStyle(fontSize: 13, color: Colors.black54, fontWeight: FontWeight.w500)
                 ),
@@ -582,12 +546,13 @@ class _RoomPageState extends State<RoomPage> {
     );
   }
 
-  /// Displays the count and identity chips of all participants who have successfully submitted.
+  /// Displays the dynamically hydrated list of users who have successfully submitted preferences.
   Widget _buildSubmittedPreferencesHeader(RoomViewModel vm) {
     return AuthBox(
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
           const Text("Submitted Preferences", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+          // Hardcoded max of 12 for UI purposes based on current app specs
           Text("${vm.submittedCount}/12", style: const TextStyle(color: kPrimaryColor, fontWeight: FontWeight.bold, fontSize: 18)),
         ]),
         const SizedBox(height: 10),
@@ -597,50 +562,60 @@ class _RoomPageState extends State<RoomPage> {
           Wrap(
             spacing: 8, 
             runSpacing: 8,
-            children: List.generate(vm.submittedCount, (i) {
-              final bool isHost = i == 0; 
+            // STRICT TYPING APPLIED HERE to ensure Flutter builds the widget tree correctly
+            children: vm.submittedUsers.map<Widget>((user) {
+              final bool isHostIcon = user['isHost'] == true; 
+              final String username = user['username']?.toString() ?? "Guest";
               
               return Chip(
                 avatar: CircleAvatar(
-                  backgroundColor: isHost ? Colors.amber.shade600 : Colors.green, 
+                  backgroundColor: isHostIcon ? Colors.amber.shade600 : Colors.green, 
                   child: const Icon(Icons.check, color: Colors.white, size: 12)
                 ), 
                 label: Text(
-                  isHost ? "Host" : "Guest", 
+                  username, 
                   style: TextStyle(
-                    color: isHost ? Colors.amber.shade900 : Colors.black87,
-                    fontWeight: isHost ? FontWeight.bold : FontWeight.normal
+                    color: isHostIcon ? Colors.amber.shade900 : Colors.black87,
+                    fontWeight: isHostIcon ? FontWeight.bold : FontWeight.normal
                   )
                 ), 
-                backgroundColor: isHost ? Colors.amber.shade50 : const Color(0xFFE8F5E9),
+                backgroundColor: isHostIcon ? Colors.amber.shade50 : const Color(0xFFE8F5E9),
                 side: BorderSide.none,
               );
-            }),
+            }).toList(),
           ),
       ]),
     );
   }
 
-  /// Displays the user's currently selected preferences (Restaurants and Cuisines)
-  /// before they are submitted to the database. Contains logic to differentiate 
-  /// between the two types for custom UI icons.
+  /// Renders the list of preferences the user is currently building locally.
   Widget _buildLivePreferencesSection(BuildContext context, RoomViewModel vm) {
     return AuthBox(
       child: Column(children: [
         Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
           Text("Live Preferences (${vm.preferenceCount}/3)", style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+          // Only show the Add button if the user is not locked out (hasn't submitted)
           if (!vm.isLocked) IconButton(icon: const Icon(Icons.add_circle, color: kPrimaryColor, size: 30), onPressed: () => _handleAddButtonPress(vm)),
         ]),
         const Divider(),
-        if (vm.allPreferences.isEmpty) const Text("No choices added.", style: TextStyle(color: Colors.grey))
+        
+        // UX FIX: If they already submitted but local state is empty (e.g., they re-entered the room)
+        if (vm.isLocked && vm.allPreferences.isEmpty)
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 10.0),
+            child: Text("Your preferences are submitted. ✅", style: TextStyle(color: Colors.green, fontWeight: FontWeight.w600, fontSize: 14)),
+          )
+        // Default empty state before submission
+        else if (vm.allPreferences.isEmpty) 
+          const Text("No choices added.", style: TextStyle(color: Colors.grey))
+        // Show the active or locked list
         else ListView.builder(
           shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(), 
+          physics: const NeverScrollableScrollPhysics(), // Disables inner scrolling to flow with the outer view
           itemCount: vm.allPreferences.length,
           itemBuilder: (ctx, i) {
             final prefName = vm.allPreferences[i];
-            
-            // Evaluates if the specific string maps to a stored Restaurant object.
+            // Identify type for icon rendering
             final isRestaurant = vm.selectedRestaurants.any((r) => r['name'] == prefName);
 
             return Container(
@@ -658,6 +633,7 @@ class _RoomPageState extends State<RoomPage> {
                   child: Icon(isRestaurant ? Icons.store_rounded : Icons.restaurant_menu_rounded, color: isRestaurant ? Colors.blue : kPrimaryColor, size: 20),
                 ),
                 title: Text(prefName, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+                // Trailing remove button vanishes once the user locks in their submission
                 trailing: vm.isLocked ? null : IconButton(icon: const Icon(Icons.close, color: Colors.grey, size: 20), onPressed: () => vm.removePreferenceByName(prefName)),
               ),
             );
@@ -669,11 +645,10 @@ class _RoomPageState extends State<RoomPage> {
 }
 
 /// ==============================================================================
-/// GOOGLE MAPS SEARCH DIALOG
+/// GOOGLE MAP SEARCH DIALOG
 /// ==============================================================================
-/// A stateful dialog containing an interactive Google Map and a text field.
-/// Allows users to search for specific physical restaurants via the Places API,
-/// preview their location on the map, and confirm their selection.
+/// A self-contained stateful widget that encapsulates the Google Maps experience.
+/// It queries the backend proxy (to avoid CORS) and plots markers on the map.
 class _GoogleMapSearchDialog extends StatefulWidget {
   final RoomViewModel vm;
   const _GoogleMapSearchDialog({required this.vm});
@@ -688,10 +663,10 @@ class _GoogleMapSearchDialogState extends State<_GoogleMapSearchDialog> {
   Map<String, dynamic>? _selectedPlace;
   bool _isSearching = false;
 
-  /// Executes the text query against the Coordinator's map service.
-  /// Updates the map with interactive markers if results are found.
+  /// Triggered when the user hits the Search button.
+  /// Calls the ViewModel, which passes the query to the backend Cloud Run service.
   void _onSearch() async {
-    FocusScope.of(context).unfocus(); 
+    FocusScope.of(context).unfocus(); // Drops the mobile keyboard
     final query = _searchController.text.trim();
     if (query.isEmpty) return;
     
@@ -700,12 +675,14 @@ class _GoogleMapSearchDialogState extends State<_GoogleMapSearchDialog> {
     final results = await widget.vm.searchPlaces(query);
     if (!mounted) return;
     
+    // Fallback if the API returns zero hits
     if (results.isEmpty) { 
       setState(() => _isSearching = false); 
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("No results found."))); 
       return; 
     }
     
+    // Success: Populate the map with pins and select the primary result
     setState(() {
       _isSearching = false;
       _selectedPlace = results.first;
@@ -717,6 +694,7 @@ class _GoogleMapSearchDialogState extends State<_GoogleMapSearchDialog> {
       )).toSet();
     });
     
+    // Pan the camera gracefully to the discovered coordinate
     _mapController?.animateCamera(CameraUpdate.newLatLngZoom(LatLng(_selectedPlace!['lat'], _selectedPlace!['lng']), 15.0));
   }
 
@@ -728,17 +706,17 @@ class _GoogleMapSearchDialogState extends State<_GoogleMapSearchDialog> {
         height: 600, 
         child: Stack(
           children: [
-            // 1. The Interactive Map Layer
+            // Map Layer
             ClipRRect(
               borderRadius: BorderRadius.circular(20), 
               child: GoogleMap(
-                initialCameraPosition: const CameraPosition(target: LatLng(3.1390, 101.6869), zoom: 12), 
+                initialCameraPosition: const CameraPosition(target: LatLng(3.1390, 101.6869), zoom: 12), // Default center (Kuala Lumpur)
                 onMapCreated: (c) => _mapController = c, 
                 markers: _markers
               )
             ),
             
-            // 2. The Floating Search Input Overlay
+            // Search Overlay Layer
             Positioned(
               top: 20, left: 15, right: 15,
               child: Column(
@@ -781,7 +759,7 @@ class _GoogleMapSearchDialogState extends State<_GoogleMapSearchDialog> {
               )
             ),
             
-            // 3. The Selection Confirmation Overlay 
+            // Floating Action Selection Layer (Pops up when a pin is tapped)
             if (_selectedPlace != null) 
               Positioned(
                 bottom: 25, left: 25, right: 25, 

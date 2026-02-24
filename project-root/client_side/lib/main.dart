@@ -40,7 +40,7 @@ void main() async {
   await Firebase.initializeApp(
     options: kIsWeb 
       ? const FirebaseOptions(
-          apiKey: "AIzaSyBwyjnVcW04aJoAzGxJbb0T9eNF85FnCNk",
+          apiKey: "API KEY",
           appId: "1:1047563657237:web:f0c57590374f7686acae1c", // Your Web ID
           messagingSenderId: "1047563657237",
           projectId: "what2eat-1469f",
@@ -50,7 +50,7 @@ void main() async {
           databaseURL: "https://what2eat-1469f-default-rtdb.asia-southeast1.firebasedatabase.app/",
         )
       : const FirebaseOptions(
-          apiKey: "AIzaSyBwyjnVcW04aJoAzGxJbb0T9eNF85FnCNk",
+          apiKey: "API KEY",
           appId: "1:1047563657237:android:be7b031c6999395bacae1c", // Your Android ID
           messagingSenderId: "1047563657237",
           projectId: "what2eat-1469f",

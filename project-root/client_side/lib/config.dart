@@ -2,7 +2,7 @@ import 'package:flutter/foundation.dart';
 
 class Config {
   // 1. Production URL (UPDATED to Singapore)
-  static const String _prodUrl = "https://what2eat-backend-rkm6axkdcq-as.a.run.app";
+  static const String _prodUrl = "https://api-rkm6axkdcq-as.a.run.app";
 
   // 2. Localhost (Updated region for Emulator/Web)
   // Note: The emulator will now host at /asia-southeast1/ because your python code specifies it.
