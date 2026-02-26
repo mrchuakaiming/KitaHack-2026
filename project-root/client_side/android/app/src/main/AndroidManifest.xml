@@ -19,7 +19,7 @@
                  to determine the Window background behind the Flutter UI. -->
             <meta-data
               android:name="io.flutter.embedding.android.NormalTheme"
-              android:value="AIzaSyBwyjnVcW04aJoAzGxJbb0T9eNF85FnCNk"
+              android:value="API KEY"
               android:resource="@style/NormalTheme"
               />
             <intent-filter>
