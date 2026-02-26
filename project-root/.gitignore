@@ -1,106 +1,78 @@
 # ==============================================================================
-# SYSTEM & MISC (macOS, Windows, Linux)
+# 1. SECRETS & API KEYS (CRITICAL)
+# ==============================================================================
+**/key.json
+**/.env
+**/.env.*
+*.pem
+
+# ==============================================================================
+# 2. PYTHON BACKEND (What2Eat API)
+# ==============================================================================
+**/venv/
+**/__pycache__/
+*.py[cod]
+*$py.class
+.python-version
+.pytest_cache/
+
+# ==============================================================================
+# 3. FLUTTER FRONTEND (What2Eat App)
+# ==============================================================================
+.dart_tool/
+.packages
+.pub/
+.pub-cache/
+.flutter-plugins
+.flutter-plugins-dependencies
+**/build/
+**/doc/api/
+
+# Android
+**/android/.gradle/
+**/android/app/debug/
+**/android/app/profile/
+**/android/app/release/
+**/android/local.properties
+
+# iOS
+**/ios/Flutter/.last_build_id
+**/ios/Flutter/Flutter.podspec
+**/ios/Pods/
+**/ios/Runner.xcworkspace/
+**/ios/Runner/GeneratedPluginRegistrant.*
+
+# ==============================================================================
+# 4. FIREBASE & NODE.JS
+# ==============================================================================
+.firebase/
+.dataconnect/
+emulator-data/
+**/node_modules/
+coverage/
+.npm/
+*.tgz
+
+# ==============================================================================
+# 5. LOGS & RUNTIME DATA
+# ==============================================================================
+*.log
+logs/
+pids/
+*.pid
+*.seed
+
+# ==============================================================================
+# 6. SYSTEM & IDEs
 # ==============================================================================
 .DS_Store
-../.DS_Store
 Thumbs.db
 *.tmp
 *.bak
 *.old
 *.swp
-*.lock
-
-# ==============================================================================
-# LOGS & RUNTIME DATA
-# ==============================================================================
-logs
-*.log
-*-debug.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-firebase-debug.log*
-firebase-debug.*.log*
-firestore-debug.log
-pids
-*.pid
-*.seed
-*.pid.lock
-
-# ==============================================================================
-# ENVIRONMENT & SECRETS (CRITICAL)
-# ==============================================================================
-# This ignores .env in root, client_side, and server_side folders
-.env/
-venv/
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-
-# ==============================================================================
-# FIREBASE CONFIG & EMULATORS
-# ==============================================================================
-.firebase/
-.dataconnect
-emulator-data/
-*.jar
-
-# NOTE: If you want team members to use different project aliases, 
-# uncomment the line below. Otherwise, keep it commented to share .firebaserc.
-# .firebaserc
-
-# ==============================================================================
-# NODE.JS / BACKEND (server_side)
-# ==============================================================================
-node_modules/
-bower_components/
-build/Release
-lib-cov
-coverage
-.nyc_output
-.grunt
-.lock-wscript
-.npm
-.eslintcache
-.node_repl_history
-*.tgz
-.yarn-integrity
-
-# ==============================================================================
-# FLUTTER / DART (client_side)
-# ==============================================================================
-.dart_tool/
-.packages
-.pub/
-build/
-**/doc/api/
-.flutter-plugins
-.flutter-plugins-dependencies
-.pub-cache/
-**/ios/Flutter/.last_build_id
-
-# Android specific
-/android/.gradle/
-/android/app/debug
-/android/app/profile
-/android/app/release
-/local.properties
-
-# iOS specific
-ios/Flutter/Flutter.podspec
-ios/Pods/
-ios/Runner.xcworkspace/
-ios/Runner/GeneratedPluginRegistrant.*
-
-# ==============================================================================
-# IDEs & EDITORS
-# ==============================================================================
-# VS Code
 .vscode/
-
-# IntelliJ / Android Studio
+.idea/
 *.iml
 *.ipr
 *.iws
-.idea/
