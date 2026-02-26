@@ -1,15 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:firebase_core/firebase_core.dart';
-// Note: We keep these imports to ensure the app knows about the services,
-// even if we don't use them directly in main().
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:firebase_database/firebase_database.dart';
-import 'package:flutter/foundation.dart'; // For kDebugMode checks if needed later
+import 'package:flutter/foundation.dart'; 
+
 import 'app.dart';
 
-// ViewModels
+// ViewModels (State Management)
 import 'viewmodels/login_vm.dart';
 import 'viewmodels/verify_email_vm.dart';
 import 'viewmodels/register_vm.dart';
@@ -18,30 +14,31 @@ import 'viewmodels/room_vm.dart';
 import 'viewmodels/settings_page_vm.dart';
 import 'viewmodels/reset_password_vm.dart';
 
-/// The entry point of the application.
+/// ==============================================================================
+/// APPLICATION ENTRY POINT
+/// ==============================================================================
+/// This function bootstraps the entire Flutter application.
 ///
-/// This function is responsible for:
-/// 1. Setting up the Flutter engine binding.
-/// 2. Initializing the Firebase SDK with specific project credentials.
-/// 3. Injecting the necessary State Management providers (ViewModels).
-/// 4. Launching the root widget (MyApp).
+/// Responsibilities:
+/// 1. Binds the Flutter engine to the framework.
+/// 2. Initializes the Firebase SDK with explicit platform options.
+/// 3. Injects all ViewModels into the global widget tree via Provider.
+/// 4. Mounts the root [MyApp] widget.
 void main() async {
-  // CRITICAL: Ensures the Flutter engine is fully loaded before we try to
-  // run any asynchronous code (like Firebase.initializeApp).
-  // Without this, the app will crash instantly on startup.
+  // CRITICAL: Ensures the Flutter engine is fully loaded before executing 
+  // asynchronous native calls (like Firebase.initializeApp).
   WidgetsFlutterBinding.ensureInitialized();
 
   // ---------------------------------------------------------------------------
   // FIREBASE INITIALIZATION
   // ---------------------------------------------------------------------------
-  // We are manually providing the FirebaseOptions here because the automatic
-  // CLI configuration failed. These keys allow the app to talk to the
-  // correct project on Google's servers.
+  // Explicitly providing FirebaseOptions ensures reliable connections across 
+  // Web, Android, and iOS platforms without relying on the auto-generated config.
   await Firebase.initializeApp(
     options: kIsWeb 
       ? const FirebaseOptions(
           apiKey: "AIzaSyBwyjnVcW04aJoAzGxJbb0T9eNF85FnCNk",
-          appId: "1:1047563657237:web:f0c57590374f7686acae1c", // Your Web ID
+          appId: "1:1047563657237:web:f0c57590374f7686acae1c", 
           messagingSenderId: "1047563657237",
           projectId: "what2eat-1469f",
           authDomain: "what2eat-1469f.firebaseapp.com",
@@ -51,7 +48,7 @@ void main() async {
         )
       : const FirebaseOptions(
           apiKey: "AIzaSyBwyjnVcW04aJoAzGxJbb0T9eNF85FnCNk",
-          appId: "1:1047563657237:android:be7b031c6999395bacae1c", // Your Android ID
+          appId: "1:1047563657237:android:be7b031c6999395bacae1c", 
           messagingSenderId: "1047563657237",
           projectId: "what2eat-1469f",
           storageBucket: "what2eat-1469f.firebasestorage.app",
@@ -59,17 +56,10 @@ void main() async {
         ),
   );
 
-  // ---------------------------------------------------------------------------
-  // PRODUCTION MODE
-  // ---------------------------------------------------------------------------
-  // The Emulator connection code has been REMOVED.
-  // The app will now read/write directly to the live Google Cloud servers.
-  // Ensure your Firestore and Realtime Database rules are set to "Test Mode"
-  // (public) in the console for now so you can write data without login errors.
-
   runApp(
-    // MultiProvider injects the ViewModels into the widget tree so they are
-    // accessible from anywhere in the app via context.read/watch.
+    // MultiProvider acts as a dependency injection container.
+    // By placing it at the root, these ViewModels survive page navigations
+    // and can be accessed anywhere using `context.read<T>()` or `context.watch<T>()`.
     MultiProvider(
       providers: [
         ChangeNotifierProvider(create: (_) => LoginViewModel()),
@@ -78,13 +68,15 @@ void main() async {
         ChangeNotifierProvider(create: (_) => HomeViewModel()),
         ChangeNotifierProvider(create: (_) => RoomViewModel()),
         ChangeNotifierProvider(create: (_) => SettingsViewModel()),
-        // ChangeNotifierProvider(create: (_) => ResetPasswordViewModel()),
+        // UNCOMMENTED: Password Reset State Management
+        ChangeNotifierProvider(create: (_) => ResetPasswordViewModel()),
       ],
       child: const MyApp(),
     ),
   );
 }
 
+/// The root application widget that configures the material theme and routing.
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
 
@@ -97,9 +89,9 @@ class MyApp extends StatelessWidget {
         useMaterial3: true,
         scaffoldBackgroundColor: const Color(0xFFF5F5F5),
       ),
-      // Define the starting route of the app
+      // Starts the user at the Login screen
       initialRoute: '/login',
-      // Load routes from the AppRoutes class
+      // Pulls the central routing table from app.dart
       routes: AppRoutes.routes,
     );
   }

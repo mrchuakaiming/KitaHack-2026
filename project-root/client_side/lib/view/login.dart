@@ -3,10 +3,14 @@ import 'package:provider/provider.dart';
 import 'common_widgets.dart'; 
 import '../viewmodels/login_vm.dart';
 
-/// The Entry Point of the Application.
+/// ==============================================================================
+/// LOGIN PAGE (View)
+/// ==============================================================================
+/// The entry point for unauthenticated users.
 ///
-/// This widget provides the Email/Password login form.
-/// It uses [LoginViewModel] to handle the authentication state.
+/// This widget provides the Email/Password login form and delegates all 
+/// authentication logic to the [LoginViewModel]. It listens to state changes
+/// to show loading spinners or error messages reactively.
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
 
@@ -15,10 +19,9 @@ class LoginPage extends StatefulWidget {
 }
 
 class _LoginPageState extends State<LoginPage> {
-  // Key for validating the form fields
+  /// GlobalKey used to trigger form validation natively in Flutter.
   final _formKey = GlobalKey<FormState>();
   
-  // Controllers for text input
   final TextEditingController _emailController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
 
@@ -29,23 +32,22 @@ class _LoginPageState extends State<LoginPage> {
     super.dispose();
   }
 
-  /// Triggers the Login Logic.
+  /// Handles the execution of the login flow when the user presses "Log In".
   ///
-  /// 1. Validates the form format (email regex, password length).
-  /// 2. Calls [LoginViewModel.logIn].
-  /// 3. Navigates to Home on success.
+  /// Flow:
+  /// 1. Runs local regex validation on the input fields.
+  /// 2. Suspends execution while awaiting the [LoginViewModel.logIn] network call.
+  /// 3. If successful, reroutes the user to the `/home` dashboard.
   void _handleLogin() async {
     if (_formKey.currentState!.validate()) {
-      // Access the ViewModel
       final vm = context.read<LoginViewModel>();
 
-      // Execute Login
       bool success = await vm.logIn(
         _emailController.text, 
         _passwordController.text
       );
 
-      // Navigate on Success
+      // Ensures the widget is still on screen before navigating
       if (success && mounted) {
         Navigator.pushReplacementNamed(context, '/home');
       }
@@ -54,7 +56,7 @@ class _LoginPageState extends State<LoginPage> {
 
   @override
   Widget build(BuildContext context) {
-    // Watch the ViewModel to rebuild on loading state changes or errors
+    // context.watch forces the UI to rebuild if isLoading or errorMessage changes.
     final vm = context.watch<LoginViewModel>();
 
     return Scaffold(
@@ -64,19 +66,16 @@ class _LoginPageState extends State<LoginPage> {
           children: [
             const SizedBox(height: 60),
             
-            // --- HEADER ---
             const AuthHeader(
               title: "Welcome Back to What2Eat",
               subtitle: "Sign in",
             ),
 
-            // --- FORM BOX ---
             AuthBox(
               child: Form(
                 key: _formKey,
                 child: Column(
                   children: [
-                    // Email Input
                     AuthTextField(
                       labelText: "Email",
                       obscureText: false,
@@ -85,7 +84,6 @@ class _LoginPageState extends State<LoginPage> {
                       validator: (val) => !val!.contains('@') ? 'Invalid Email' : null,
                     ),
                     
-                    // Password Input
                     AuthTextField(
                       labelText: "Password",
                       obscureText: true,
@@ -94,7 +92,7 @@ class _LoginPageState extends State<LoginPage> {
                       validator: (val) => val!.isEmpty ? 'Password required' : null,
                     ),
 
-                    // Forgot Password Link
+                    // Forgot Password Navigation
                     Align(
                       alignment: Alignment.centerRight,
                       child: TextButton(
@@ -105,7 +103,7 @@ class _LoginPageState extends State<LoginPage> {
 
                     const SizedBox(height: 10),
 
-                    // Error Display
+                    // Dynamic Error Rendering
                     if (vm.errorMessage != null)
                       Padding(
                         padding: const EdgeInsets.only(bottom: 10),
@@ -116,10 +114,9 @@ class _LoginPageState extends State<LoginPage> {
                         ),
                       ),
 
-                    // Login Button
+                    // Submit Button
                     AuthButton(
                       text: vm.isLoading ? "Signing In..." : "Log In",
-                      // Disable button while loading to prevent double-taps
                       onPressed: vm.isLoading ? null : () => _handleLogin(),
                     ),
                   ],
@@ -129,13 +126,12 @@ class _LoginPageState extends State<LoginPage> {
 
             const SizedBox(height: 30),
 
-            // --- CREATE ACCOUNT LINK ---
+            // Navigation to Account Creation
             Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 const Text("New here? ", style: TextStyle(color: Colors.grey)),
                 GestureDetector(
-                  // UPDATED: Points to the new Step 1 (Verify Email) page
                   onTap: () => Navigator.pushNamed(context, '/verify_email'),
                   child: const Text(
                     "Create Account", 

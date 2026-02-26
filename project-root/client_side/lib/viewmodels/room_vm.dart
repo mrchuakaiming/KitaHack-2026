@@ -9,106 +9,103 @@ import 'package:http/http.dart' as http;
 import '../config.dart'; 
 import '../coordinators/coordinator.dart';
 import '../models/preferences.dart';
+import '../models/user.dart'; // Needed to fetch the User profile for usernames
 import '../services/firestore_service.dart';
 
 /// ==============================================================================
-/// ROOM VIEW MODEL
+/// ROOM VIEW MODEL (Presenter/Controller)
 /// ==============================================================================
-/// This class acts as the "Brain" for the Room Page. It bridges the UI with 
-/// Firestore, Realtime Database, and the Python AI Backend.
-/// 
-/// **KEY RESPONSIBILITIES:**
-/// 1. **Session Management**: Handles joining, leaving, and identifying Host vs Guest.
-/// 2. **State Management**: Tracks if the room is "Locked" (user submitted) or "Processing".
-/// 3. **Real-time Sync**: Listens to the Realtime Database to count how many users are ready.
-/// 4. **AI Integration**: Sends the gathered data to the Python Cloud Function.
-/// ==============================================================================
+/// The RoomViewModel orchestrates the state and business logic for the RoomPage.
+/// It bridges the gap between the local UI state and the backend Firebase ecosystem
+/// (Firestore for persistent room state, Realtime Database for active participant tracking).
 class RoomViewModel extends ChangeNotifier {
   final Coordinator _coordinator;
   final FirestoreService _firestore;
 
-  /// The hard limit on how many preferences a single user can select.
+  /// The absolute limit on how many preferences a single user can add.
   static const int MAX_PREFS = 3;
 
-  // --- 1. STATE VARIABLES ---
-  
-  /// The unique identifier for the current active room.
+  // ===========================================================================
+  // 1. STATE VARIABLES
+  // ===========================================================================
   String _roomId = "";
-  
-  /// Controls the loading spinners in the UI during network requests.
   bool _isLoading = true;
-  
-  /// Determines if the current user created the room. Hosts manage the session but do not vote.
   bool _isHost = false;
   
-  /// If true, the user has successfully submitted their choices and the UI is disabled.
-  bool _isLocked = false; 
-  
-  /// Holds any error messages to be displayed via SnackBar in the UI.
+  /// Internal state tracking if the current user has successfully synced their votes to the database.
+  /// When true, it locks the UI to prevent further tampering.
+  bool _isLockedState = false; 
   String? _errorMessage;
+  
+  /// Stores the UID of the creator to identify them among participants for UI styling.
+  String _hostUid = "";
 
-  // --- 2. DATA VARIABLES ---
-  
-  /// The count of users who have clicked "Submit". Watched by the Host to know when to start generation.
+  // ===========================================================================
+  // 2. DATA VARIABLES
+  // ===========================================================================
   int _submittedCount = 0; 
-  
-  /// The final AI result containing the restaurant name, price range, and justification.
   Map<String, dynamic>? _recommendation; 
-  
-  /// Raw participant data collected from Realtime Database (used for payload construction).
   List<Map<String, dynamic>> _collectedParticipants = [];
 
-  // --- 3. LOCAL SELECTION STATE ---
+  /// A curated list mapping UIDs to their fetched Usernames and Roles. 
+  /// This is bound directly to the UI Chip list.
+  List<Map<String, dynamic>> _submittedUsers = [];
   
-  /// A temporary list of specific restaurants the user has selected via Google Maps.
+  /// A local memory map to prevent re-fetching the same user document multiple times 
+  /// during Realtime Database stream events.
+  final Map<String, String> _userNamesCache = {};
+
+  // ===========================================================================
+  // 3. LOCAL SELECTION STATE
+  // ===========================================================================
   final List<Map<String, dynamic>> _selectedRestaurants = [];
-  
-  /// A temporary set of general cuisines the user has selected.
   final Set<String> _selectedCuisines = {};
-  
-  /// The budget bounds selected by the user. Defaults to $10 - $50.
   RangeValues _budgetRange = const RangeValues(10, 50);
 
-  /// Subscription to listen for real-time participant count updates.
+  /// Maintains the listener for the Realtime DB node, ensuring it can be disposed cleanly.
   StreamSubscription? _participantsSubscription;
 
-  /// Constructor injects dependencies for easier testing and modularity.
   RoomViewModel({Coordinator? coordinator, FirestoreService? db})
       : _coordinator = coordinator ?? Coordinator(),
         _firestore = db ?? FirestoreService();
 
-  // --- 4. PUBLIC GETTERS ---
+  // ===========================================================================
+  // 4. PUBLIC GETTERS (Read-only access for the UI)
+  // ===========================================================================
   String get roomId => _roomId;
   bool get isLoading => _isLoading;
   bool get isHost => _isHost;
-  bool get isLocked => _isLocked;
+  
+  /// Reflects if the user (Host or Guest) is locked into their submission.
+  /// Disables the budget slider and live preference buttons upon submission.
+  bool get isLocked => _isLockedState;
+  
+  /// Accurately tracks if the user's vote is in the database.
+  bool get hasSubmitted => _isLockedState;
+  
   String? get errorMessage => _errorMessage;
   Map<String, dynamic>? get recommendation => _recommendation;
   int get submittedCount => _submittedCount;
   
+  /// The curated list of submitted users containing their actual Usernames.
+  List<Map<String, dynamic>> get submittedUsers => _submittedUsers;
+  
   List<Map<String, dynamic>> get selectedRestaurants => _selectedRestaurants;
   RangeValues get budgetRange => _budgetRange;
   
-  /// Returns a merged list of Cuisines and Restaurant Names for rendering the unified UI list.
+  /// A merged list of both cuisines and restaurant names for UI rendering.
   List<String> get allPreferences => [
         ..._selectedCuisines,
         ..._selectedRestaurants.map((r) => r['name'] as String),
       ];
       
-  /// Current total of selected items across both categories.
   int get preferenceCount => _selectedCuisines.length + _selectedRestaurants.length;
 
   /// ==========================================================================
   /// INITIALIZATION
   /// ==========================================================================
-  /// Called immediately when the Room Page loads.
-  /// 
-  /// **Logic Flow:**
-  /// 1. **Clean Slate**: Calls `clearLocalPreferences()` to wipe stale data.
-  /// 2. **Authentication**: Verifies the user is logged in.
-  /// 3. **Join Protocol**: Determines if user is Host or Guest.
-  /// 4. **Cleanup**: Registers 'onDisconnect' handlers in RTDB.
-  /// 5. **Sync**: Starts listening to the participant count stream.
+  /// Called immediately when the RoomPage loads. Sets up the initial state,
+  /// registers the user with the server, and establishes database listeners.
   Future<void> init(String roomId) async {
     _roomId = roomId;
     _isLoading = true;
@@ -122,18 +119,23 @@ class RoomViewModel extends ChangeNotifier {
       final uid = FirebaseAuth.instance.currentUser?.uid ?? "";
       if (uid.isEmpty) throw Exception("User not authenticated");
 
-      // 1. Join Room and determine authority level
+      // Fetch the room document to identify the Host UID for UI highlighting
+      final roomData = await _firestore.getRoom(roomId);
+      if (roomData != null) {
+        _hostUid = roomData['host_uid'] ?? "";
+      }
+
+      // Registers the user with the backend, which returns their role (host/guest)
       final status = await _coordinator.joinRoom(roomId: roomId, uid: uid);
       _isHost = (status == 'host');
-      _isLocked = (status == 'done_user'); 
+      _isLockedState = (status == 'done_user'); 
 
-      // 2. Register disconnection handlers
       await _coordinator.leaveRoom(roomId: roomId, uid: uid);
-
-      // 3. Fetch pre-existing results (handles users re-joining a finished room)
+      
+      // Checks if the AI has already generated a response for this room
       await _fetchExistingResult();
       
-      // 4. Connect to live presence data
+      // Starts listening for dynamic changes (people joining/submitting)
       _subscribeToParticipants();
       await _refreshParticipantCount();
 
@@ -146,12 +148,7 @@ class RoomViewModel extends ChangeNotifier {
     }
   }
 
-  /// ==========================================================================
-  /// LOCAL STATE ACTIONS
-  /// ==========================================================================
-
-  /// Clears all temporary selections and resets the budget slider.
-  /// Triggered on room entry and when a user chooses to discard unsubmitted changes.
+  /// Wipes all unsubmitted UI states to ensure a clean slate.
   void clearLocalPreferences() {
     _selectedRestaurants.clear();
     _selectedCuisines.clear();
@@ -159,17 +156,14 @@ class RoomViewModel extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// **RESTORED METHOD**: Updates the local budget range state.
-  /// Triggered by the RangeSlider in `room.dart`.
-  /// [newValues] The updated start and end values from the slider.
+  /// Updates the slider values dynamically unless the user is locked.
   void updateBudget(RangeValues newValues) {
-    if (_isLocked) return;
+    if (isLocked) return;
     _budgetRange = newValues;
     notifyListeners();
   }
 
-  /// Attempts to fetch a finished recommendation from Firestore.
-  /// Silently fails if the room is still active and processing.
+  /// Queries the backend to see if the Gemini recommendation is already complete.
   Future<void> _fetchExistingResult() async {
     try {
       final result = await _coordinator.wantResult(roomId: _roomId);
@@ -180,8 +174,7 @@ class RoomViewModel extends ChangeNotifier {
     } catch (_) {}
   }
 
-  /// Updates local state dynamically when the Firestore StreamBuilder pushes new data.
-  /// Extracts the 'output' key which contains the AI payload.
+  /// Designed to be hooked into a StreamBuilder (in room.dart) to catch live Document updates.
   void updateFromStream(Map<String, dynamic> data) {
     if (data.containsKey('output')) {
       final output = data['output'];
@@ -192,76 +185,153 @@ class RoomViewModel extends ChangeNotifier {
   }
 
   /// ==========================================================================
-  /// REALTIME DATABASE LISTENERS
+  /// REALTIME DATABASE LISTENERS & USERNAME HYDRATION
   /// ==========================================================================
-
-  /// Listens to `participants/{roomId}` in RTDB.
-  /// Parses the raw JSON map, counts users where `submitted == true`, and updates the UI.
+  /// Initiates a persistent connection to the Firebase Realtime Database
+  /// to track the 'participants' node for live updates.
   void _subscribeToParticipants() {
+    final String currentUid = FirebaseAuth.instance.currentUser?.uid ?? "";
+
     _participantsSubscription?.cancel();
     _participantsSubscription = FirebaseDatabase.instance
         .ref("participants/$_roomId")
         .onValue
         .listen((event) {
           final data = event.snapshot.value as Map<dynamic, dynamic>?;
-          if (data != null) {
-            final List<Map<String, dynamic>> temp = [];
-            int count = 0;
-            data.forEach((uid, details) {
-              if (details is Map && details['submitted'] == true) {
-                count++;
-                try {
-                   temp.add(Map<String, dynamic>.from(details));
-                } catch(e) { print(e); }
-              }
-            });
-            _submittedCount = count;
-            _collectedParticipants = temp;
-          } else {
-            _submittedCount = 0;
-            _collectedParticipants = [];
-          }
-          notifyListeners();
+          _processRTDBData(data, currentUid);
         });
   }
 
-  /// Performs a one-time static read of the RTDB participant count.
-  /// Used as a fallback and initializer before the stream fully connects.
+  /// Manual trigger to force-fetch the RTDB state.
   Future<void> _refreshParticipantCount() async {
+    final String currentUid = FirebaseAuth.instance.currentUser?.uid ?? "";
     try {
       final snapshot = await FirebaseDatabase.instance.ref("participants/$_roomId").get();
       if (snapshot.exists) {
         final data = snapshot.value as Map<dynamic, dynamic>;
-        int count = 0;
-        data.forEach((uid, details) {
-          if (details is Map && details['submitted'] == true) count++;
-        });
-        _submittedCount = count;
-        notifyListeners();
+        _processRTDBData(data, currentUid);
       }
     } catch (_) {}
+  }
+
+  /// Master processor for participant updates. 
+  /// Because RTDB only holds UIDs, this function dynamically queries Firestore 
+  /// to map those UIDs to real Usernames for a better UI experience.
+  Future<void> _processRTDBData(Map<dynamic, dynamic>? data, String currentUid) async {
+    // If the room data is completely empty/deleted
+    if (data == null) {
+      _submittedCount = 0;
+      _collectedParticipants = [];
+      _isLockedState = false;
+      _submittedUsers = [];
+      notifyListeners();
+      return;
+    }
+
+    final List<Map<String, dynamic>> temp = [];
+    int count = 0;
+    bool currentUserSubmitted = false;
+    List<String> uidsToFetch = [];
+    List<Map<String, dynamic>> newSubmittedUsers = [];
+
+    // Parse the incoming generic data block
+    data.forEach((uidKey, details) {
+      final uid = uidKey as String;
+      if (details is Map && details['submitted'] == true) {
+        count++;
+        if (uid == currentUid) currentUserSubmitted = true;
+        
+        try {
+           temp.add(Map<String, dynamic>.from(details));
+        } catch(e) { debugPrint(e.toString()); }
+
+        // Cache-check for Username: If we don't know it, tag it for fetching.
+        if (!_userNamesCache.containsKey(uid)) {
+          uidsToFetch.add(uid);
+          _userNamesCache[uid] = "Loading..."; 
+        }
+
+        // Build the basic UI object using the cache (it may say "Loading..." temporarily)
+        newSubmittedUsers.add({
+          'uid': uid,
+          'username': _userNamesCache[uid],
+          'isHost': uid == _hostUid,
+        });
+      }
+    });
+
+    // UX Enhancement: Sort the array so the Host always appears first in the UI chip list
+    newSubmittedUsers.sort((a, b) {
+      if (a['isHost'] && !b['isHost']) return -1;
+      if (!a['isHost'] && b['isHost']) return 1;
+      return 0;
+    });
+
+    // Update state with parsed data
+    _submittedCount = count;
+    _collectedParticipants = temp;
+    _isLockedState = currentUserSubmitted;
+    _submittedUsers = newSubmittedUsers;
+    notifyListeners();
+
+    // Secondary Operation: Perform Async fetch for any *new* users detected in the stream
+    if (uidsToFetch.isNotEmpty) {
+      bool fetchedNew = false;
+      for (String u in uidsToFetch) {
+        try {
+          final userProfile = await _firestore.getUser(u); 
+          if (userProfile != null && userProfile.username.isNotEmpty) {
+            _userNamesCache[u] = userProfile.username; // Save successful lookup to cache
+          } else {
+            _userNamesCache[u] = (u == _hostUid) ? "Host" : "Guest"; // Fallback text
+          }
+          fetchedNew = true;
+        } catch (e) {
+          _userNamesCache[u] = (u == _hostUid) ? "Host" : "Guest"; // Fallback on error
+          fetchedNew = true;
+        }
+      }
+      
+      // If we learned new names, stitch them into the UI array and force a re-render
+      if (fetchedNew) {
+        for (var userMap in _submittedUsers) {
+          userMap['username'] = _userNamesCache[userMap['uid']];
+        }
+        notifyListeners();
+      }
+    }
   }
 
   /// ==========================================================================
   /// UI ACTIONS & VALIDATION
   /// ==========================================================================
-
-  /// Validates if the user is permitted to use the bottom navigation.
-  /// Prevents Hosts and Locked users from navigating away without proper teardown.
+  /// Acts as the gatekeeper for the bottom navigation bar to prevent accidental exits.
   bool validateNavigation(int index) {
+    // 1. Allow staying on the current tab (Assuming index 1 is the Room tab)
     if (index == 1) { 
       _errorMessage = null; 
       return true; 
     }
-    if (_isHost || _isLocked) {
-      _errorMessage = "Please leave the room using the Home button.";
-      notifyListeners();
-      return false;
+
+    // 2. If the AI recommendation is already generated, the event is over. Free to leave.
+    if (_recommendation != null) {
+      _errorMessage = null;
+      return true;
     }
-    return true;
+
+    // 3. If the user (Host or Guest) has successfully submitted their preferences, they can leave freely.
+    if (_isLockedState) {
+      _errorMessage = null;
+      return true;
+    }
+
+    // 4. If we reach here, the user HAS NOT submitted yet. Block navigation and surface the warning.
+    _errorMessage = "Please submit your preferences before leaving the room.";
+    notifyListeners();
+    return false;
   }
 
-  /// Proxies Google Maps search queries through the Coordinator to the MapsService.
+  /// Proxies the Google Places query to the backend Cloud Run service to bypass web CORS limitations.
   Future<List<Map<String, dynamic>>> searchPlaces(String query) async {
     try { 
       return await _coordinator.searchRestaurant(query); 
@@ -270,11 +340,11 @@ class RoomViewModel extends ChangeNotifier {
     }
   }
 
-  /// Adds a verified Google Maps place object to the local selected restaurants list.
-  /// Prevents duplicates based on the Google `placeId`.
+  /// Validates and adds a restaurant to local state.
   bool addRestaurant(Map<String, dynamic> place) {
-    if (_isHost || _isLocked || preferenceCount >= MAX_PREFS) return false;
+    if (isLocked || preferenceCount >= MAX_PREFS) return false;
     
+    // Prevents duplicate additions
     if (!_selectedRestaurants.any((r) => r['placeId'] == place['placeId'])) {
       _selectedRestaurants.add(place);
       notifyListeners();
@@ -283,30 +353,27 @@ class RoomViewModel extends ChangeNotifier {
     return false;
   }
 
-  /// Adds a generic cuisine string to the local selected cuisines set.
+  /// Validates and adds a cuisine type to local state.
   bool addCuisine(String cuisine) {
-    if (_isHost || _isLocked || preferenceCount >= MAX_PREFS) return false;
+    if (isLocked || preferenceCount >= MAX_PREFS) return false;
     _selectedCuisines.add(cuisine);
     notifyListeners();
     return true;
   }
 
-  /// Removes a specific preference from either the restaurant list or the cuisine set
-  /// based on its string name.
+  /// Removes an item by its name, scanning both cuisine and restaurant sets.
   void removePreferenceByName(String name) {
-    if (_isLocked) return;
+    if (isLocked) return;
     _selectedRestaurants.removeWhere((r) => r['name'] == name);
     _selectedCuisines.remove(name);
     notifyListeners();
   }
 
   /// ==========================================================================
-  /// SUBMISSION LOGIC (GUEST)
+  /// SUBMISSION LOGIC (HOST & GUEST)
   /// ==========================================================================
-  /// Packages local selections, sends them to Firestore, and marks the user as 
-  /// 'submitted' in RTDB, effectively locking their UI.
+  /// Compiles local choices into a standard model and writes them to the backend.
   Future<void> submitPreference() async {
-    if (_isLocked || _isHost) return;
     if (preferenceCount == 0) {
       _errorMessage = "Please add at least one preference!";
       notifyListeners();
@@ -318,7 +385,7 @@ class RoomViewModel extends ChangeNotifier {
     notifyListeners();
 
     try {
-      // Unify disparate preferences into a single payload array for the AI
+      // Package the diverse choices into a unified format for the AI Payload
       List<Map<String, dynamic>> combinedPrefs = [];
       
       for (var c in _selectedCuisines) {
@@ -343,13 +410,15 @@ class RoomViewModel extends ChangeNotifier {
         dietaryRestrictions: [], 
       );
 
+      // Execute network call to log preferences
       await _coordinator.submitPreference(
         uid: FirebaseAuth.instance.currentUser!.uid, 
         roomId: _roomId, 
         preferences: prefModel
       );
       
-      _isLocked = true; 
+      // Instantly lock the UI upon success and refresh the stream to show the green checkmark
+      _isLockedState = true; 
       await _refreshParticipantCount();
       
     } catch (e) {
@@ -361,10 +430,9 @@ class RoomViewModel extends ChangeNotifier {
   }
 
   /// ==========================================================================
-  /// GENERATION LOGIC (HOST)
+  /// GENERATION LOGIC (HOST ONLY)
   /// ==========================================================================
-  /// Signals the backend to begin processing the accumulated preferences.
-  /// Triggers a UI loading state for all users connected to the Firestore stream.
+  /// Triggers the cloud function that feeds the collected data to the Gemini 2.5 Flash API.
   Future<void> generateRecommendation() async {
     if (!_isHost) return;
 
@@ -379,12 +447,12 @@ class RoomViewModel extends ChangeNotifier {
     notifyListeners();
 
     try {
-      // 1. Optimistic Update: Set room status to trigger loading animations across all clients
+      // 1. Update Firestore status so Guests see the "AI is Deciding" global loading screen
       await FirebaseFirestore.instance.collection('rooms').doc(_roomId).update({
         'status': 'processing'
       });
 
-      // 2. Transmit gathered Realtime Database data to the Python Cloud Function
+      // 2. Dispatch the execution command to the Singapore server
       final String backendUrl = "${Config.serverBaseUrl}/ai/generate-outcome";
       
       final response = await http.post(
@@ -401,10 +469,11 @@ class RoomViewModel extends ChangeNotifier {
       }
       
     } catch (e) {
+      // Clean up messy exception traces for the UI snackbar
       final errString = e.toString().replaceAll('Exception:', '').trim();
       _errorMessage = "Generation Error: $errString";
       
-      // Rollback optimistic update on failure to allow retries
+      // Rollback the status so the Host can attempt generation again
       await FirebaseFirestore.instance.collection('rooms').doc(_roomId).update({
         'status': 'waiting'
       });
@@ -414,6 +483,8 @@ class RoomViewModel extends ChangeNotifier {
     }
   }
 
+  /// Cleans up the active Realtime Database listeners to prevent memory leaks 
+  /// when the user navigates away from the RoomPage.
   @override
   void dispose() {
     _participantsSubscription?.cancel();
